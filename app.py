@@ -1,111 +1,167 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
+import sqlite3
+import os
 
-st.set_page_config(page_title="Painel CBHPM", layout="wide")
+DB_NAME = "cbhpm_database.db"
 
-# ---------- FUNÇÕES ----------
-@st.cache_data
-def carregar_banco():
-    conn = sqlite3.connect("cbhpm_database.db")
-    df = pd.read_sql("SELECT * FROM procedimentos", conn)
+# ---------------------------
+# BANCO DE DADOS
+# ---------------------------
+def get_conn():
+    return sqlite3.connect(DB_NAME, check_same_thread=False)
+
+def criar_tabela():
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS procedimentos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT,
+            descricao TEXT,
+            porte REAL,
+            uco REAL,
+            filme REAL,
+            versao TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def limpar_tabela():
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM procedimentos")
+    conn.commit()
+    conn.close()
+
+# ---------------------------
+# IMPORTAÇÃO
+# ---------------------------
+def importar_csvs(arquivos):
+    conn = get_conn()
+
+    for arquivo in arquivos:
+        try:
+            df = pd.read_csv(
+                arquivo,
+                encoding="latin-1",  # evita erro de acentuação
+                sep=","
+            )
+
+            # Ajuste de colunas conforme modelo CBHPM
+            df = df[['Código', 'Descrição', 'Porte', 'UCO', 'Filme']]
+            df['versao'] = arquivo.name
+
+            df.columns = [
+                'codigo',
+                'descricao',
+                'porte',
+                'uco',
+                'filme',
+                'versao'
+            ]
+
+            df.to_sql(
+                'procedimentos',
+                conn,
+                if_exists='append',
+                index=False
+            )
+
+        except Exception as e:
+            st.error(f"Erro ao importar {arquivo.name}: {e}")
+
+    conn.close()
+
+# ---------------------------
+# CONSULTA
+# ---------------------------
+def consultar_dados(codigo, descricao):
+    conn = get_conn()
+
+    query = "SELECT codigo, descricao, porte, uco, filme, versao FROM procedimentos WHERE 1=1"
+    params = []
+
+    if codigo:
+        query += " AND codigo LIKE ?"
+        params.append(f"%{codigo}%")
+
+    if descricao:
+        query += " AND descricao LIKE ?"
+        params.append(f"%{descricao}%")
+
+    df = pd.read_sql(query, conn, params=params)
     conn.close()
     return df
 
-def buscar_procedimento(codigo, versao):
-    conn = sqlite3.connect("cbhpm_database.db")
-    df = pd.read_sql(
-        "SELECT descricao, porte, uco, filme FROM procedimentos WHERE codigo=? AND versao=?",
-        conn,
-        params=(codigo, versao)
+# ---------------------------
+# INTERFACE
+# ---------------------------
+st.set_page_config(page_title="CBHPM App", layout="wide")
+st.title("📘 CBHPM – Banco de Dados e Consulta")
+
+criar_tabela()
+
+aba = st.sidebar.radio(
+    "Menu",
+    ["📥 Importar CBHPM", "🔍 Consultar Procedimentos"]
+)
+
+# ---------------------------
+# ABA IMPORTAÇÃO
+# ---------------------------
+if aba == "📥 Importar CBHPM":
+    st.subheader("Importar arquivos CSV da CBHPM")
+
+    arquivos = st.file_uploader(
+        "Selecione os CSVs",
+        type="csv",
+        accept_multiple_files=True
     )
-    conn.close()
-    return df
-
-
-# ---------- ABAS ----------
-aba1, aba2 = st.tabs(["📊 Painel CBHPM", "🗄️ Banco de Dados"])
-
-# ==============================
-# ABA 1 – PAINEL CBHPM
-# ==============================
-with aba1:
-    st.title("📊 Painel de Consulta CBHPM")
 
     col1, col2 = st.columns(2)
 
     with col1:
-        versao = st.selectbox(
-            "Selecione a tabela CBHPM:",
-            [
-                "CBHPM 2022", "CBHPM 2020", "CBHPM 2018", "CBHPM 2016",
-                "CBHPM 2014", "CBHPM 2012", "CBHPM 2010",
-                "CBHPM 5 (2009)", "CBHPM 5 (2008)", "CBHPM 4", "CBHPM 3"
-            ]
-        )
+        if st.button("🚀 Importar dados"):
+            if arquivos:
+                importar_csvs(arquivos)
+                st.success("Importação concluída com sucesso!")
+            else:
+                st.warning("Selecione pelo menos um arquivo CSV.")
 
     with col2:
-        valor_filme = st.number_input(
-            "Valor do Filme (m²):",
-            min_value=0.0,
-            value=21.70,
-            step=0.01
-        )
+        if st.button("🧹 Limpar banco"):
+            limpar_tabela()
+            st.success("Banco de dados limpo!")
 
-    codigo = st.text_input("Código TUSS")
+# ---------------------------
+# ABA CONSULTA
+# ---------------------------
+if aba == "🔍 Consultar Procedimentos":
+    st.subheader("Consulta de Procedimentos CBHPM")
 
-    if codigo:
-        resultado = buscar_procedimento(codigo.strip(), versao)
+    col1, col2 = st.columns(2)
 
-        if not resultado.empty:
-            desc = resultado.iloc[0]["descricao"]
-            porte = float(resultado.iloc[0]["porte"])
-            uco = float(resultado.iloc[0]["uco"])
-            qtd_filme = float(resultado.iloc[0]["filme"])
+    with col1:
+        codigo = st.text_input("Código")
 
-            total_filme = qtd_filme * valor_filme
-            total = porte + uco + total_filme
+    with col2:
+        descricao = st.text_input("Descrição")
 
-            st.info(f"**Descrição:** {desc}")
+    if st.button("🔎 Pesquisar"):
+        df = consultar_dados(codigo, descricao)
 
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Porte", f"R$ {porte:,.2f}")
-            m2.metric("UCO", f"R$ {uco:,.2f}")
-            m3.metric("Filme", f"R$ {total_filme:,.2f}")
-
-            st.success(f"### Valor Total: R$ {total:,.2f}")
+        if df.empty:
+            st.warning("Nenhum resultado encontrado.")
         else:
-            st.warning("Procedimento não encontrado.")
+            st.success(f"{len(df)} registros encontrados")
+            st.dataframe(df, use_container_width=True)
 
-# ==============================
-# ABA 2 – VISUALIZAR BANCO
-# ==============================
-with aba2:
-    st.title("🗄️ Banco de Dados – Procedimentos CBHPM")
-
-    df = carregar_banco()
-
-    colf1, colf2 = st.columns(2)
-
-    with colf1:
-        versao_filtro = st.selectbox(
-            "Filtrar por versão:",
-            ["Todas"] + sorted(df["versao"].unique().tolist())
-        )
-
-    with colf2:
-        codigo_filtro = st.text_input("Filtrar por código (opcional)")
-
-    if versao_filtro != "Todas":
-        df = df[df["versao"] == versao_filtro]
-
-    if codigo_filtro:
-        df = df[df["codigo"].str.contains(codigo_filtro, na=False)]
-
-    st.write(f"🔢 Total de registros: {len(df)}")
-
-    st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True
-    )
+            # Download
+            st.download_button(
+                "⬇️ Baixar resultado (CSV)",
+                data=df.to_csv(index=False).encode("utf-8"),
+                file_name="resultado_cbhpm.csv",
+                mime="text/csv"
+            )
