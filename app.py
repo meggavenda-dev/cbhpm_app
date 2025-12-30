@@ -1,269 +1,135 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
+import psycopg2
 
-DB_NAME = "cbhpm_database.db"
-
-# =====================================================
-# FUNÇÃO UTILITÁRIA (CORREÇÃO DEFINITIVA)
-# =====================================================
-def to_float(valor):
-    try:
-        if valor is None:
-            return 0.0
-        if isinstance(valor, str):
-            valor = valor.replace(",", ".").strip()
-            if valor == "":
-                return 0.0
-        return float(valor)
-    except:
-        return 0.0
-
-# =====================================================
-# BANCO DE DADOS
-# =====================================================
-def get_conn():
-    return sqlite3.connect(DB_NAME, check_same_thread=False)
-
-def criar_tabela():
-    conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS procedimentos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            codigo TEXT,
-            descricao TEXT,
-            porte REAL,
-            uco REAL,
-            filme REAL,
-            versao TEXT,
-            UNIQUE (codigo, versao)
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-# =====================================================
-# IMPORTAÇÃO
-# =====================================================
-def importar_csvs(arquivos, nome_tabela):
-    conn = get_conn()
-    cursor = conn.cursor()
-
-    for arquivo in arquivos:
-        try:
-            df = pd.read_csv(
-                arquivo,
-                encoding="latin-1",
-                sep=";",
-                engine="python",
-                on_bad_lines="skip"
-            )
-
-            df = df[['Código', 'Descrição', 'Porte', 'UCO', 'Filme']]
-            df['versao'] = nome_tabela
-
-            df.columns = [
-                'codigo',
-                'descricao',
-                'porte',
-                'uco',
-                'filme',
-                'versao'
-            ]
-
-            for col in ['porte', 'uco', 'filme']:
-                df[col] = (
-                    df[col]
-                    .astype(str)
-                    .str.replace(",", ".", regex=False)
-                    .replace("nan", "0")
-                    .astype(float, errors="ignore")
-                )
-
-            for _, row in df.iterrows():
-                cursor.execute("""
-                    INSERT OR IGNORE INTO procedimentos
-                    (codigo, descricao, porte, uco, filme, versao)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (
-                    row['codigo'],
-                    row['descricao'],
-                    to_float(row['porte']),
-                    to_float(row['uco']),
-                    to_float(row['filme']),
-                    row['versao']
-                ))
-
-            conn.commit()
-
-        except Exception as e:
-            st.error(f"Erro ao importar {arquivo.name}: {e}")
-
-    conn.close()
-
-# =====================================================
-# CONSULTAS
-# =====================================================
-def listar_versoes():
-    conn = get_conn()
-    df = pd.read_sql(
-        "SELECT DISTINCT versao FROM procedimentos ORDER BY versao",
-        conn
+# =========================
+# CONEXÃO SUPABASE
+# =========================
+def get_connection():
+    return psycopg2.connect(
+        host=st.secrets["SUPABASE_HOST"],
+        database=st.secrets["SUPABASE_DB"],
+        user=st.secrets["SUPABASE_USER"],
+        password=st.secrets["SUPABASE_PASSWORD"],
+        port=st.secrets["SUPABASE_PORT"]
     )
+
+# =========================
+# INSERÇÃO DE DADOS
+# =========================
+def inserir_dados(df, tabela_nome):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    for _, row in df.iterrows():
+        cur.execute("""
+            insert into cbhpm (codigo, descricao, porte, uco, tabela_nome)
+            values (%s, %s, %s, %s, %s)
+        """, (
+            str(row["codigo"]),
+            row["descricao"],
+            float(row["porte"]),
+            float(row["uco"]),
+            tabela_nome
+        ))
+
+    conn.commit()
+    cur.close()
     conn.close()
-    return df['versao'].tolist()
 
-def buscar_procedimento(codigo, descricao, versao):
-    conn = get_conn()
-
+# =========================
+# CONSULTAS
+# =========================
+def consultar_procedimentos(tabela_nome, descricao=""):
+    conn = get_connection()
     query = """
-        SELECT codigo, descricao, porte, uco, filme
-        FROM procedimentos
-        WHERE versao = ?
+        select * from cbhpm
+        where tabela_nome = %s
+        and descricao ilike %s
+        order by descricao
     """
-    params = [versao]
-
-    if codigo:
-        query += " AND codigo = ?"
-        params.append(codigo)
-
-    if descricao:
-        query += " AND descricao LIKE ?"
-        params.append(f"%{descricao}%")
-
-    df = pd.read_sql(query, conn, params=params)
+    df = pd.read_sql(query, conn, params=(tabela_nome, f"%{descricao}%"))
     conn.close()
     return df
 
-# =====================================================
-# INTERFACE (ORDEM CORRETA)
-# =====================================================
-st.set_page_config(page_title="CBHPM – Painel", layout="wide")
-st.title("📊 CBHPM – Banco de Dados e Painel de Cálculo")
+def listar_tabelas():
+    conn = get_connection()
+    df = pd.read_sql(
+        "select distinct tabela_nome from cbhpm order by tabela_nome",
+        conn
+    )
+    conn.close()
+    return df["tabela_nome"].tolist()
 
-criar_tabela()
+# =========================
+# INTERFACE
+# =========================
+st.set_page_config("CBHPM Permanente", layout="wide")
 
-menu = st.sidebar.radio(
+menu = st.sidebar.selectbox(
     "Menu",
-    ["📥 Importar CBHPM", "📋 Consultar", "🧮 Painel de Cálculo"]
+    ["📥 Importar Tabela", "🔎 Consulta", "🧮 Painel de Cálculo"]
 )
 
-# =====================================================
-# ABA IMPORTAÇÃO
-# =====================================================
-if menu == "📥 Importar CBHPM":
-    st.subheader("Importar tabela CBHPM")
+# =========================
+# IMPORTAÇÃO
+# =========================
+if menu == "📥 Importar Tabela":
+    st.header("Importar CBHPM (1 vez apenas)")
 
-    nome_tabela = st.text_input(
-        "Nome da Tabela / Versão",
-        placeholder="Ex: CBHPM 2022 Oficial"
-    )
+    tabela_nome = st.text_input("Nome da tabela (ex: CBHPM 2024)")
+    arquivo = st.file_uploader("CSV da CBHPM", type=["csv"])
 
-    arquivos = st.file_uploader(
-        "Selecione os arquivos CSV",
-        type="csv",
-        accept_multiple_files=True
-    )
+    if arquivo and tabela_nome:
+        df = pd.read_csv(arquivo)
+        st.dataframe(df.head())
 
-    if st.button("🚀 Importar dados"):
-        if not nome_tabela:
-            st.warning("Informe um nome para a tabela.")
-        elif not arquivos:
-            st.warning("Selecione ao menos um CSV.")
-        else:
-            importar_csvs(arquivos, nome_tabela)
-            st.success("Importação concluída com sucesso!")
+        if st.button("Salvar no banco permanente"):
+            inserir_dados(df, tabela_nome)
+            st.success("Tabela salva com sucesso no Supabase")
 
-# =====================================================
-# ABA CONSULTA
-# =====================================================
-if menu == "📋 Consultar":
-    st.subheader("Consulta de Procedimentos")
+# =========================
+# CONSULTA
+# =========================
+elif menu == "🔎 Consulta":
+    st.header("Consulta por descrição")
 
-    versoes = listar_versoes()
+    tabelas = listar_tabelas()
+    tabela = st.selectbox("Tabela", tabelas)
 
-    if not versoes:
-        st.warning("Nenhuma tabela importada.")
-    else:
-        col1, col2, col3 = st.columns(3)
+    descricao = st.text_input("Buscar por descrição")
 
-        with col1:
-            versao = st.selectbox("Tabela CBHPM", versoes)
+    if tabela:
+        df = consultar_procedimentos(tabela, descricao)
+        st.dataframe(df)
 
-        with col2:
-            codigo = st.text_input("Código")
+# =========================
+# CÁLCULO
+# =========================
+elif menu == "🧮 Painel de Cálculo":
+    st.header("Cálculo CBHPM")
 
-        with col3:
-            descricao = st.text_input("Descrição")
+    tabelas = listar_tabelas()
+    tabela = st.selectbox("Tabela", tabelas)
 
-        if st.button("🔎 Pesquisar"):
-            df = buscar_procedimento(codigo, descricao, versao)
+    if tabela:
+        df = consultar_procedimentos(tabela)
+        procedimento = st.selectbox(
+            "Procedimento",
+            df["descricao"]
+        )
 
-            if df.empty:
-                st.warning("Nenhum procedimento encontrado.")
-            else:
-                st.success(f"{len(df)} registros encontrados")
-                st.dataframe(df, use_container_width=True)
+        proc = df[df["descricao"] == procedimento].iloc[0]
 
-# =====================================================
-# PAINEL DE CÁLCULO (COM INFLATOR)
-# =====================================================
-if menu == "🧮 Painel de Cálculo":
-    st.subheader("Painel de Cálculo CBHPM")
+        valor_uco = st.number_input("Valor da UCO (R$)", value=100.0)
+        inflator = st.number_input("Inflator (%)", value=0.0)
 
-    versoes = listar_versoes()
+        porte = float(proc["porte"])
+        uco = float(proc["uco"])
 
-    if not versoes:
-        st.warning("Nenhuma tabela importada.")
-    else:
-        col1, col2, col3, col4 = st.columns(4)
+        valor_base = porte * uco * valor_uco
+        fator = 1 + (inflator / 100)
+        valor_final = valor_base * fator
 
-        with col1:
-            versao = st.selectbox("Tabela CBHPM", versoes)
-
-        with col2:
-            codigo = st.text_input("Código TUSS")
-
-        with col3:
-            valor_filme = st.number_input(
-                "Valor do Filme (m²)",
-                min_value=0.0,
-                value=21.70,
-                step=0.01
-            )
-
-        with col4:
-            inflator_pct = st.number_input(
-                "Inflator (%)",
-                min_value=0.0,
-                value=0.0,
-                step=0.5
-            )
-
-        if st.button("🧮 Calcular"):
-            df = buscar_procedimento(codigo, None, versao)
-
-            if df.empty:
-                st.warning("Procedimento não encontrado.")
-            else:
-                proc = df.iloc[0]
-
-                porte = to_float(proc['porte'])
-                uco = to_float(proc['uco'])
-                qtd_filme = to_float(proc['filme'])
-
-                base = porte + uco
-                inflator_valor = base * (inflator_pct / 100)
-                total_filme = qtd_filme * valor_filme
-                total = base + inflator_valor + total_filme
-
-                st.info(f"**Descrição:** {proc['descricao']}")
-
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Porte", f"R$ {porte:,.2f}")
-                c2.metric("UCO", f"R$ {uco:,.2f}")
-                c3.metric("Inflator", f"R$ {inflator_valor:,.2f}")
-                c4.metric("Filme", f"R$ {total_filme:,.2f}")
-
-                st.success(f"### 💰 Valor Total: R$ {total:,.2f}")
+        st.metric("Valor Base", f"R$ {valor_base:,.2f}")
+        st.metric("Valor Final (com inflator)", f"R$ {valor_final:,.2f}")
