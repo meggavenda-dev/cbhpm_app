@@ -36,9 +36,9 @@ def limpar_tabela():
     conn.close()
 
 # =====================================================
-# IMPORTAÇÃO DE CSV
+# IMPORTAÇÃO
 # =====================================================
-def importar_csvs(arquivos):
+def importar_csvs(arquivos, nome_tabela):
     conn = get_conn()
     cursor = conn.cursor()
 
@@ -53,7 +53,7 @@ def importar_csvs(arquivos):
             )
 
             df = df[['Código', 'Descrição', 'Porte', 'UCO', 'Filme']]
-            df['versao'] = arquivo.name
+            df['versao'] = nome_tabela
 
             df.columns = [
                 'codigo',
@@ -90,46 +90,43 @@ def listar_versoes():
     conn.close()
     return df['versao'].tolist()
 
-def consultar_dados(codigo, descricao, versao):
+def buscar_procedimento(codigo, versao):
     conn = get_conn()
-
-    query = """
-        SELECT codigo, descricao, porte, uco, filme, versao
+    df = pd.read_sql(
+        """
+        SELECT codigo, descricao, porte, uco, filme
         FROM procedimentos
-        WHERE versao = ?
-    """
-    params = [versao]
-
-    if codigo:
-        query += " AND codigo LIKE ?"
-        params.append(f"%{codigo}%")
-
-    if descricao:
-        query += " AND descricao LIKE ?"
-        params.append(f"%{descricao}%")
-
-    df = pd.read_sql(query, conn, params=params)
+        WHERE codigo = ? AND versao = ?
+        """,
+        conn,
+        params=(codigo, versao)
+    )
     conn.close()
     return df
 
 # =====================================================
-# INTERFACE STREAMLIT
+# INTERFACE
 # =====================================================
-st.set_page_config(page_title="CBHPM App", layout="wide")
-st.title("📘 CBHPM – Banco de Dados e Consulta")
+st.set_page_config(page_title="CBHPM – Painel", layout="wide")
+st.title("📊 CBHPM – Banco de Dados e Painel de Cálculo")
 
 criar_tabela()
 
 menu = st.sidebar.radio(
     "Menu",
-    ["📥 Importar CBHPM", "🔍 Consultar Procedimentos"]
+    ["📥 Importar CBHPM", "📋 Consultar", "🧮 Painel de Cálculo"]
 )
 
 # =====================================================
 # ABA IMPORTAÇÃO
 # =====================================================
 if menu == "📥 Importar CBHPM":
-    st.subheader("Importar arquivos CSV da CBHPM")
+    st.subheader("Importar tabela CBHPM")
+
+    nome_tabela = st.text_input(
+        "Nome da Tabela / Versão",
+        placeholder="Ex: CBHPM 2022 Oficial"
+    )
 
     arquivos = st.file_uploader(
         "Selecione os arquivos CSV",
@@ -137,62 +134,89 @@ if menu == "📥 Importar CBHPM":
         accept_multiple_files=True
     )
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if st.button("🚀 Importar dados"):
-            if arquivos:
-                importar_csvs(arquivos)
-                st.success("Importação concluída com sucesso!")
-            else:
-                st.warning("Selecione pelo menos um arquivo CSV.")
-
-    with col2:
-        if st.button("🧹 Limpar banco"):
-            limpar_tabela()
-            st.success("Banco de dados limpo com sucesso!")
+    if st.button("🚀 Importar dados"):
+        if not nome_tabela:
+            st.warning("Informe um nome para a tabela.")
+        elif not arquivos:
+            st.warning("Selecione ao menos um CSV.")
+        else:
+            importar_csvs(arquivos, nome_tabela)
+            st.success("Importação concluída com sucesso!")
 
 # =====================================================
 # ABA CONSULTA
 # =====================================================
-if menu == "🔍 Consultar Procedimentos":
-    st.subheader("Consulta de Procedimentos CBHPM")
+if menu == "📋 Consultar":
+    st.subheader("Consulta de Procedimentos")
 
     versoes = listar_versoes()
 
     if not versoes:
-        st.warning("Nenhuma tabela CBHPM importada ainda.")
+        st.warning("Nenhuma tabela importada.")
     else:
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
 
         with col1:
-            versao_selecionada = st.selectbox(
-                "Tabela CBHPM",
-                versoes
-            )
+            versao = st.selectbox("Tabela CBHPM", versoes)
 
         with col2:
             codigo = st.text_input("Código")
 
-        with col3:
-            descricao = st.text_input("Descrição")
-
         if st.button("🔎 Pesquisar"):
-            df = consultar_dados(
-                codigo=codigo,
-                descricao=descricao,
-                versao=versao_selecionada
-            )
+            df = buscar_procedimento(codigo, versao)
 
             if df.empty:
-                st.warning("Nenhum resultado encontrado para esta tabela.")
+                st.warning("Procedimento não encontrado.")
             else:
-                st.success(f"{len(df)} registros encontrados")
                 st.dataframe(df, use_container_width=True)
 
-                st.download_button(
-                    "⬇️ Baixar resultado (CSV)",
-                    data=df.to_csv(index=False).encode("utf-8"),
-                    file_name="resultado_cbhpm.csv",
-                    mime="text/csv"
-                )
+# =====================================================
+# PAINEL DE CÁLCULO
+# =====================================================
+if menu == "🧮 Painel de Cálculo":
+    st.subheader("Painel de Cálculo CBHPM")
+
+    versoes = listar_versoes()
+
+    if not versoes:
+        st.warning("Nenhuma tabela importada.")
+    else:
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            versao = st.selectbox("Tabela CBHPM", versoes)
+
+        with col2:
+            codigo = st.text_input("Código TUSS")
+
+        with col3:
+            valor_filme = st.number_input(
+                "Valor do Filme (m²)",
+                min_value=0.0,
+                value=21.70,
+                step=0.01
+            )
+
+        if st.button("🧮 Calcular"):
+            df = buscar_procedimento(codigo, versao)
+
+            if df.empty:
+                st.warning("Procedimento não encontrado.")
+            else:
+                proc = df.iloc[0]
+
+                porte = float(proc['porte'])
+                uco = float(proc['uco'])
+                qtd_filme = float(proc['filme'])
+
+                total_filme = qtd_filme * valor_filme
+                total = porte + uco + total_filme
+
+                st.info(f"**Descrição:** {proc['descricao']}")
+
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Porte", f"R$ {porte:,.2f}")
+                c2.metric("UCO", f"R$ {uco:,.2f}")
+                c3.metric("Filme", f"R$ {total_filme:,.2f}")
+
+                st.success(f"### 💰 Valor Total: R$ {total:,.2f}")
