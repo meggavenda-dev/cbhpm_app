@@ -21,7 +21,8 @@ def criar_tabela():
             porte REAL,
             uco REAL,
             filme REAL,
-            versao TEXT
+            versao TEXT,
+            UNIQUE (codigo, versao)
         )
     """)
     conn.commit()
@@ -35,10 +36,11 @@ def limpar_tabela():
     conn.close()
 
 # =====================================================
-# IMPORTAÇÃO
+# IMPORTAÇÃO DE CSV
 # =====================================================
 def importar_csvs(arquivos):
     conn = get_conn()
+    cursor = conn.cursor()
 
     for arquivo in arquivos:
         try:
@@ -62,12 +64,14 @@ def importar_csvs(arquivos):
                 'versao'
             ]
 
-            df.to_sql(
-                'procedimentos',
-                conn,
-                if_exists='append',
-                index=False
-            )
+            for _, row in df.iterrows():
+                cursor.execute("""
+                    INSERT OR IGNORE INTO procedimentos
+                    (codigo, descricao, porte, uco, filme, versao)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, tuple(row))
+
+            conn.commit()
 
         except Exception as e:
             st.error(f"Erro ao importar {arquivo.name}: {e}")
@@ -75,17 +79,26 @@ def importar_csvs(arquivos):
     conn.close()
 
 # =====================================================
-# CONSULTA
+# CONSULTAS
 # =====================================================
-def consultar_dados(codigo, descricao):
+def listar_versoes():
+    conn = get_conn()
+    df = pd.read_sql(
+        "SELECT DISTINCT versao FROM procedimentos ORDER BY versao",
+        conn
+    )
+    conn.close()
+    return df['versao'].tolist()
+
+def consultar_dados(codigo, descricao, versao):
     conn = get_conn()
 
     query = """
         SELECT codigo, descricao, porte, uco, filme, versao
         FROM procedimentos
-        WHERE 1=1
+        WHERE versao = ?
     """
-    params = []
+    params = [versao]
 
     if codigo:
         query += " AND codigo LIKE ?"
@@ -100,7 +113,7 @@ def consultar_dados(codigo, descricao):
     return df
 
 # =====================================================
-# INTERFACE
+# INTERFACE STREAMLIT
 # =====================================================
 st.set_page_config(page_title="CBHPM App", layout="wide")
 st.title("📘 CBHPM – Banco de Dados e Consulta")
@@ -132,12 +145,12 @@ if menu == "📥 Importar CBHPM":
                 importar_csvs(arquivos)
                 st.success("Importação concluída com sucesso!")
             else:
-                st.warning("Selecione pelo menos um CSV.")
+                st.warning("Selecione pelo menos um arquivo CSV.")
 
     with col2:
         if st.button("🧹 Limpar banco"):
             limpar_tabela()
-            st.success("Banco de dados limpo!")
+            st.success("Banco de dados limpo com sucesso!")
 
 # =====================================================
 # ABA CONSULTA
@@ -145,26 +158,41 @@ if menu == "📥 Importar CBHPM":
 if menu == "🔍 Consultar Procedimentos":
     st.subheader("Consulta de Procedimentos CBHPM")
 
-    col1, col2 = st.columns(2)
+    versoes = listar_versoes()
 
-    with col1:
-        codigo = st.text_input("Código")
+    if not versoes:
+        st.warning("Nenhuma tabela CBHPM importada ainda.")
+    else:
+        col1, col2, col3 = st.columns(3)
 
-    with col2:
-        descricao = st.text_input("Descrição")
-
-    if st.button("🔎 Pesquisar"):
-        df = consultar_dados(codigo, descricao)
-
-        if df.empty:
-            st.warning("Nenhum resultado encontrado.")
-        else:
-            st.success(f"{len(df)} registros encontrados")
-            st.dataframe(df, use_container_width=True)
-
-            st.download_button(
-                "⬇️ Baixar resultado (CSV)",
-                data=df.to_csv(index=False).encode("utf-8"),
-                file_name="resultado_cbhpm.csv",
-                mime="text/csv"
+        with col1:
+            versao_selecionada = st.selectbox(
+                "Tabela CBHPM",
+                versoes
             )
+
+        with col2:
+            codigo = st.text_input("Código")
+
+        with col3:
+            descricao = st.text_input("Descrição")
+
+        if st.button("🔎 Pesquisar"):
+            df = consultar_dados(
+                codigo=codigo,
+                descricao=descricao,
+                versao=versao_selecionada
+            )
+
+            if df.empty:
+                st.warning("Nenhum resultado encontrado para esta tabela.")
+            else:
+                st.success(f"{len(df)} registros encontrados")
+                st.dataframe(df, use_container_width=True)
+
+                st.download_button(
+                    "⬇️ Baixar resultado (CSV)",
+                    data=df.to_csv(index=False).encode("utf-8"),
+                    file_name="resultado_cbhpm.csv",
+                    mime="text/csv"
+                )
