@@ -4,9 +4,9 @@ import sqlite3
 
 DB_NAME = "cbhpm_database.db"
 
-# =========================
+# =====================================================
 # BANCO DE DADOS
-# =========================
+# =====================================================
 def get_conn():
     return sqlite3.connect(DB_NAME, check_same_thread=False)
 
@@ -34,9 +34,9 @@ def limpar_tabela():
     conn.commit()
     conn.close()
 
-# =========================
+# =====================================================
 # IMPORTAÇÃO
-# =========================
+# =====================================================
 def importar_csvs(arquivos):
     conn = get_conn()
 
@@ -74,9 +74,9 @@ def importar_csvs(arquivos):
 
     conn.close()
 
-# =========================
+# =====================================================
 # CONSULTA
-# =========================
+# =====================================================
 def consultar_dados(codigo, descricao):
     conn = get_conn()
 
@@ -99,9 +99,9 @@ def consultar_dados(codigo, descricao):
     conn.close()
     return df
 
-# =========================
+# =====================================================
 # INTERFACE
-# =========================
+# =====================================================
 st.set_page_config(page_title="CBHPM App", layout="wide")
 st.title("📘 CBHPM – Banco de Dados e Consulta")
 
@@ -112,9 +112,9 @@ menu = st.sidebar.radio(
     ["📥 Importar CBHPM", "🔍 Consultar Procedimentos"]
 )
 
-# =========================
-# IMPORTAÇÃO
-# =========================
+# =====================================================
+# ABA IMPORTAÇÃO
+# =====================================================
 if menu == "📥 Importar CBHPM":
     st.subheader("Importar arquivos CSV da CBHPM")
 
@@ -139,8 +139,32 @@ if menu == "📥 Importar CBHPM":
             limpar_tabela()
             st.success("Banco de dados limpo!")
 
-# =========================
-# CONSULTA
-# =========================
+# =====================================================
+# ABA CONSULTA
+# =====================================================
 if menu == "🔍 Consultar Procedimentos":
-    st.subheader("Consulta de Pro
+    st.subheader("Consulta de Procedimentos CBHPM")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        codigo = st.text_input("Código")
+
+    with col2:
+        descricao = st.text_input("Descrição")
+
+    if st.button("🔎 Pesquisar"):
+        df = consultar_dados(codigo, descricao)
+
+        if df.empty:
+            st.warning("Nenhum resultado encontrado.")
+        else:
+            st.success(f"{len(df)} registros encontrados")
+            st.dataframe(df, use_container_width=True)
+
+            st.download_button(
+                "⬇️ Baixar resultado (CSV)",
+                data=df.to_csv(index=False).encode("utf-8"),
+                file_name="resultado_cbhpm.csv",
+                mime="text/csv"
+            )
