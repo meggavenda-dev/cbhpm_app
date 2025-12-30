@@ -5,6 +5,21 @@ import sqlite3
 DB_NAME = "cbhpm_database.db"
 
 # =====================================================
+# FUNÇÃO UTILITÁRIA (CORREÇÃO DEFINITIVA)
+# =====================================================
+def to_float(valor):
+    try:
+        if valor is None:
+            return 0.0
+        if isinstance(valor, str):
+            valor = valor.replace(",", ".").strip()
+            if valor == "":
+                return 0.0
+        return float(valor)
+    except:
+        return 0.0
+
+# =====================================================
 # BANCO DE DADOS
 # =====================================================
 def get_conn():
@@ -25,13 +40,6 @@ def criar_tabela():
             UNIQUE (codigo, versao)
         )
     """)
-    conn.commit()
-    conn.close()
-
-def limpar_tabela():
-    conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM procedimentos")
     conn.commit()
     conn.close()
 
@@ -64,12 +72,29 @@ def importar_csvs(arquivos, nome_tabela):
                 'versao'
             ]
 
+            # 🔒 LIMPEZA NUMÉRICA DEFINITIVA
+            for col in ['porte', 'uco', 'filme']:
+                df[col] = (
+                    df[col]
+                    .astype(str)
+                    .str.replace(",", ".", regex=False)
+                    .replace("nan", "0")
+                    .astype(float, errors="ignore")
+                )
+
             for _, row in df.iterrows():
                 cursor.execute("""
                     INSERT OR IGNORE INTO procedimentos
                     (codigo, descricao, porte, uco, filme, versao)
                     VALUES (?, ?, ?, ?, ?, ?)
-                """, tuple(row))
+                """, (
+                    row['codigo'],
+                    row['descricao'],
+                    to_float(row['porte']),
+                    to_float(row['uco']),
+                    to_float(row['filme']),
+                    row['versao']
+                ))
 
             conn.commit()
 
@@ -205,9 +230,9 @@ if menu == "🧮 Painel de Cálculo":
             else:
                 proc = df.iloc[0]
 
-                porte = float(proc['porte'])
-                uco = float(proc['uco'])
-                qtd_filme = float(proc['filme'])
+                porte = to_float(proc['porte'])
+                uco = to_float(proc['uco'])
+                qtd_filme = to_float(proc['filme'])
 
                 total_filme = qtd_filme * valor_filme
                 total = porte + uco + total_filme
