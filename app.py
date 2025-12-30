@@ -72,7 +72,6 @@ def importar_csvs(arquivos, nome_tabela):
                 'versao'
             ]
 
-            # 🔒 LIMPEZA NUMÉRICA DEFINITIVA
             for col in ['porte', 'uco', 'filme']:
                 df[col] = (
                     df[col]
@@ -115,17 +114,25 @@ def listar_versoes():
     conn.close()
     return df['versao'].tolist()
 
-def buscar_procedimento(codigo, versao):
+def buscar_procedimento(codigo, descricao, versao):
     conn = get_conn()
-    df = pd.read_sql(
-        """
+
+    query = """
         SELECT codigo, descricao, porte, uco, filme
         FROM procedimentos
-        WHERE codigo = ? AND versao = ?
-        """,
-        conn,
-        params=(codigo, versao)
-    )
+        WHERE versao = ?
+    """
+    params = [versao]
+
+    if codigo:
+        query += " AND codigo = ?"
+        params.append(codigo)
+
+    if descricao:
+        query += " AND descricao LIKE ?"
+        params.append(f"%{descricao}%")
+
+    df = pd.read_sql(query, conn, params=params)
     conn.close()
     return df
 
@@ -179,7 +186,7 @@ if menu == "📋 Consultar":
     if not versoes:
         st.warning("Nenhuma tabela importada.")
     else:
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
 
         with col1:
             versao = st.selectbox("Tabela CBHPM", versoes)
@@ -187,12 +194,16 @@ if menu == "📋 Consultar":
         with col2:
             codigo = st.text_input("Código")
 
+        with col3:
+            descricao = st.text_input("Descrição")
+
         if st.button("🔎 Pesquisar"):
-            df = buscar_procedimento(codigo, versao)
+            df = buscar_procedimento(codigo, descricao, versao)
 
             if df.empty:
-                st.warning("Procedimento não encontrado.")
+                st.warning("Nenhum procedimento encontrado.")
             else:
+                st.success(f"{len(df)} registros encontrados")
                 st.dataframe(df, use_container_width=True)
 
 # =====================================================
@@ -223,7 +234,7 @@ if menu == "🧮 Painel de Cálculo":
             )
 
         if st.button("🧮 Calcular"):
-            df = buscar_procedimento(codigo, versao)
+            df = buscar_procedimento(codigo, None, versao)
 
             if df.empty:
                 st.warning("Procedimento não encontrado.")
