@@ -214,8 +214,6 @@ with abas[0]:
                         st.session_state.lista_versoes = versoes()
                         time.sleep(1)
                         st.rerun()
-    else:
-        st.warning("Aguardando seleção de arquivos para importar.")
 
 # --- 2. CONSULTAR ---
 with abas[1]:
