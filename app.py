@@ -160,7 +160,7 @@ def excluir_versao(versao):
         con.close()
 
 # =====================================================
-# IMPORTAÇÃO
+# IMPORTAÇÃO (Versão Corrigida)
 # =====================================================
 def importar(arquivos, versao):
     mapa = {
@@ -179,27 +179,43 @@ def importar(arquivos, versao):
         if arquivo_ja_importado(h):
             continue
 
-        df = pd.read_excel(arq) if not arq.name.endswith(".csv") else pd.read_csv(arq, sep=";")
-        df.columns = [c.strip() for c in df.columns]
+        # LÓGICA DE LEITURA COM TRATAMENTO DE ENCODING
+        try:
+            if arq.name.lower().endswith(".csv"):
+                try:
+                    # Tenta o padrão universal primeiro
+                    df = pd.read_csv(arq, sep=";", encoding="utf-8")
+                except UnicodeDecodeError:
+                    # Se falhar, tenta o padrão comum do Excel/Windows no Brasil
+                    arq.seek(0) # Volta o arquivo para o início para tentar ler de novo
+                    df = pd.read_csv(arq, sep=";", encoding="latin-1")
+            else:
+                df = pd.read_excel(arq)
+                
+            df.columns = [c.strip() for c in df.columns]
 
-        dados = {}
-        for campo, cols in mapa.items():
-            col = next((c for c in cols if c in df.columns), None)
-            dados[campo] = df[col] if col else 0
+            dados = {}
+            for campo, cols in mapa.items():
+                col = next((c for c in cols if c in df.columns), None)
+                dados[campo] = df[col] if col else 0
 
-        df_f = pd.DataFrame(dados)
-        df_f["versao"] = versao
+            df_f = pd.DataFrame(dados)
+            df_f["versao"] = versao
 
-        for c in ["porte", "uco", "filme"]:
-            df_f[c] = df_f[c].apply(to_float)
+            for c in ["porte", "uco", "filme"]:
+                df_f[c] = df_f[c].apply(to_float)
 
-        for _, r in df_f.iterrows():
-            cur.execute(
-                "INSERT OR IGNORE INTO procedimentos VALUES (NULL,?,?,?,?,?,?)",
-                tuple(r)
-            )
+            for _, r in df_f.iterrows():
+                cur.execute("""
+                    INSERT OR IGNORE INTO procedimentos
+                    (id, codigo, descricao, porte, uco, filme, versao)
+                    VALUES (NULL,?,?,?,?,?,?)
+                """, tuple(r))
 
-        registrar_arquivo(h, versao)
+            registrar_arquivo(h, versao)
+        
+        except Exception as e:
+            st.error(f"Erro ao processar o arquivo {arq.name}: {e}")
 
     con.commit()
     con.close()
