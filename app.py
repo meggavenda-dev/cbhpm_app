@@ -56,6 +56,18 @@ def gerar_hash_arquivo(uploaded_file):
     uploaded_file.seek(0)
     return h
 
+def arquivo_ja_importado(h):
+    with sqlite3.connect(DB_NAME) as con:
+        cur = con.cursor()
+        cur.execute("SELECT 1 FROM arquivos_importados WHERE hash=?", (h,))
+        return cur.fetchone() is not None
+
+def excluir_versao(versao):
+    with gerenciar_db() as con:
+        cur = con.cursor()
+        cur.execute("DELETE FROM procedimentos WHERE versao=?", (versao,))
+        cur.execute("DELETE FROM arquivos_importados WHERE versao=?", (versao,))
+
 # =====================================================
 # IMPORTAÇÃO COM FEEDBACK
 # =====================================================
@@ -64,7 +76,6 @@ def importar(arquivos, versao):
         st.error("Por favor, informe a Versão CBHPM.")
         return False
     
-    # Mapeamento flexível (insensível a acentos/caixa)
     mapa = {
         "codigo": ["código", "codigo", "cod"],
         "descricao": ["descrição", "descricao", "desc"],
@@ -84,13 +95,11 @@ def importar(arquivos, versao):
                 st.warning(f"O conteúdo de '{arq.name}' já foi importado.")
                 continue
             
-            # Carregamento inteligente
             df = pd.read_csv(arq, sep=";", encoding="utf-8") if arq.name.lower().endswith(".csv") else pd.read_excel(arq)
             df.columns = [c.strip().lower() for c in df.columns]
             
             dados_lista = []
             for _, row in df.iterrows():
-                # Busca coluna correspondente no mapa
                 vals = {}
                 for campo, aliases in mapa.items():
                     col = next((c for c in aliases if c in df.columns), None)
@@ -106,7 +115,7 @@ def importar(arquivos, versao):
                 ))
             
             cur.executemany("INSERT OR IGNORE INTO procedimentos (codigo, descricao, porte, uco, filme, versao) VALUES (?, ?, ?, ?, ?, ?)", dados_lista)
-            cur.execute("INSERT OR IGNORE INTO arquivos_importados (hash, versao, data) VALUES (?, ?, ?)", (h, versao, datetime.now().isoformat()))
+            cur.execute("INSERT OR IGNORE INTO arquivos_importados (hash, versao, data) VALUES (NULL, ?, ?, ?)", (h, versao, datetime.now().isoformat()))
             arquivos_processados += 1
             progresso.progress((idx + 1) / len(arquivos))
             
@@ -141,13 +150,13 @@ def buscar_dados(termo, versao, tipo, capitulo="Todos"):
 st.set_page_config(page_title="CBHPM Gestão", layout="wide")
 st.title("CBHPM • Gestão Inteligente")
 
-# Sidebar com filtros globais
+# Sidebar
 with st.sidebar:
     st.header("Configurações")
-    lista_v = versoes()
-    v_selecionada = st.selectbox("Tabela Ativa", lista_v) if lista_v else None
+    lista_versoes = versoes() # <--- Alterado para lista_versoes para bater com o resto do código
+    v_selecionada = st.selectbox("Tabela Ativa", lista_versoes) if lista_versoes else None
     
-    capitulos = ["Todos", "10", "20", "30", "40"] # Exemplo de capítulos CBHPM
+    capitulos = ["Todos", "10", "20", "30", "40"]
     filtro_cap = st.selectbox("Filtrar Capítulo", capitulos)
 
 abas_nome = ["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"]
@@ -155,18 +164,16 @@ abas = st.tabs(abas_nome)
 
 # --- 1. IMPORTAR ---
 with abas[0]:
-    st.session_state.aba_ativa = 0
     v_imp = st.text_input("Nome da Versão", key="txt_v_imp")
     arqs = st.file_uploader("Arquivos", accept_multiple_files=True, key="file_up_imp")
     if st.button("Executar Importação", use_container_width=True):
         if importar(arqs, v_imp):
             st.success("Sucesso!")
-            st.balloons()
             st.cache_data.clear()
+            st.rerun()
 
 # --- 2. CONSULTAR ---
 with abas[1]:
-    st.session_state.aba_ativa = 1
     if v_selecionada:
         c1, c2 = st.columns([1, 3])
         tipo = c1.radio("Buscar por", ["Código", "Descrição"])
@@ -176,11 +183,10 @@ with abas[1]:
 
 # --- 4. COMPARAR ---
 with abas[3]:
-    st.session_state.aba_ativa = 3
-    if len(lista_v) >= 2:
+    if len(lista_versoes) >= 2:
         col_v1, col_v2 = st.columns(2)
-        va = col_v1.selectbox("Base (Antiga)", lista_v, key="va_comp")
-        vb = col_v2.selectbox("Comparação (Nova)", lista_v, key="vb_comp")
+        va = col_v1.selectbox("Base (Antiga)", lista_versoes, key="va_comp")
+        vb = col_v2.selectbox("Comparação (Nova)", lista_versoes, key="vb_comp")
         
         if st.button("Analisar Reajustes", use_container_width=True):
             st.session_state.comparacao_realizada = True
@@ -192,15 +198,12 @@ with abas[3]:
             
             if not comp.empty:
                 comp['perc_var'] = ((comp['porte_B'] - comp['porte']) / comp['porte'].replace(0,1)) * 100
-                
-                # Visualização de Impacto
                 st.subheader("Resumo do Reajuste")
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Itens Analisados", len(comp))
                 m2.metric("Variação Média", f"{comp['perc_var'].mean():.2f}%")
                 m3.metric("Com Aumento", len(comp[comp['perc_var'] > 0]))
 
-                # Gráfico
                 chart = alt.Chart(comp).mark_bar().encode(
                     x=alt.X('codigo:N', sort='-y'),
                     y='perc_var:Q',
@@ -209,20 +212,11 @@ with abas[3]:
                 ).properties(height=350)
                 st.altair_chart(chart, use_container_width=True)
 
-# --- 5. EXPORTAR ---
-with abas[4]:
-    if st.button("Gerar Arquivo", key="btn_exportar_xlsx"):
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            with sqlite3.connect(DB_NAME) as con:
-                pd.read_sql("SELECT * FROM procedimentos", con).to_excel(writer, index=False)
-        st.download_button("Baixar Excel", output.getvalue(), "cbhpm.xlsx", key="dl_btn")
-
 # --- 6. GERENCIAR ---
 with abas[5]:
-    if lista_versoes:
+    if lista_versoes: # <--- Agora a variável existe!
         v_del = st.selectbox("Versão para Deletar", lista_versoes, key="v_del_aba_gerenciar")
-        if st.button("Confirmar Exclusão", key="btn_deletar_versao"):
+        if st.button("Confirmar Exclusão"):
             excluir_versao(v_del)
             st.cache_data.clear()
-            st.rerun() # Aqui o rerun é aceitável pois a lista lateral PRECISA atualizar
+            st.rerun()
