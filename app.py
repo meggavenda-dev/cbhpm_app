@@ -65,14 +65,34 @@ def importar_csvs(arquivos, versao):
                 on_bad_lines="skip"
             )
 
-            df = df[['Código', 'Descrição', 'Porte', 'UCO', 'Filme']]
-            df.columns = ['codigo', 'descricao', 'porte', 'uco', 'filme']
-            df['versao'] = versao
+            # 🔎 Normaliza nomes das colunas
+            df.columns = [c.strip() for c in df.columns]
+
+            # Mapeamento flexível
+            mapa = {
+                'codigo': ['Código', 'Codigo', 'CODIGO'],
+                'descricao': ['Descrição', 'Descricao'],
+                'porte': ['Porte', 'Porte Cirúrgico', 'Porte Anestésico'],
+                'uco': ['UCO', 'UCO (CH)', 'CH', 'UCO_CBPM'],
+                'filme': ['Filme', 'Filme Radiológico', 'Filme Rx']
+            }
+
+            dados = {}
+
+            for campo, possiveis in mapa.items():
+                col = next((c for c in possiveis if c in df.columns), None)
+                if col:
+                    dados[campo] = df[col]
+                else:
+                    dados[campo] = 0.0  # se não existir, zera
+
+            df_final = pd.DataFrame(dados)
+            df_final['versao'] = versao
 
             for col in ['porte', 'uco', 'filme']:
-                df[col] = df[col].apply(to_float)
+                df_final[col] = df_final[col].apply(to_float)
 
-            for _, row in df.iterrows():
+            for _, row in df_final.iterrows():
                 cursor.execute("""
                     INSERT OR IGNORE INTO procedimentos
                     (codigo, descricao, porte, uco, filme, versao)
@@ -84,6 +104,7 @@ def importar_csvs(arquivos, versao):
 
     conn.commit()
     conn.close()
+
 
 # =====================================================
 # CONSULTAS
