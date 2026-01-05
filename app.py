@@ -267,6 +267,16 @@ with abas[0]:
             # Atualiza a lista de versões no estado da sessão
             st.session_state.lista_versoes = versoes()
 
+# Verifique se não há outro st.sidebar.selectbox no código com a mesma key
+if lista_versoes:
+    v_selecionada = st.sidebar.selectbox(
+        "Tabela CBHPM Ativa", 
+        lista_versoes, 
+        key="v_global_sidebar" # Mudei o nome da key para garantir
+    )
+else:
+    v_selecionada = None
+
 # --- 2. CONSULTAR ---
 with abas[1]:
     if v_selecionada:
