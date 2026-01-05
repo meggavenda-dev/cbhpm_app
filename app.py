@@ -1,3 +1,4 @@
+
 import os
 import base64
 import hashlib
@@ -324,7 +325,7 @@ if aba_atual == "📥 Importar":
                     st.rerun()
 
 # =====================================================
-# 2) CONSULTAR
+# 2) CONSULTAR  (COM BOTÃO DE PESQUISA)
 # =====================================================
 if aba_atual == "📋 Consultar":
     lista_v = versoes()
@@ -332,15 +333,28 @@ if aba_atual == "📋 Consultar":
 
     if v_selecionada:
         st.info(f"Pesquisando na Versão: {v_selecionada}")
-        c1, c2 = st.columns([1, 3])
-        tipo = c1.radio("Busca por", ["Código", "Descrição"], horizontal=True)
-        termo = c2.text_input("Digite o termo de busca...")
 
-        if termo:
-            res = buscar_dados(termo, v_selecionada, tipo)
-            st.dataframe(res, use_container_width=True, hide_index=True)
+        # Formulário de consulta com botão de pesquisa
+        with st.form("form_consulta"):
+            c1, c2 = st.columns([1, 3])
+            tipo = c1.radio("Busca por", ["Código", "Descrição"], horizontal=True)
+            termo = c2.text_input("Digite o termo de busca...")
+
+            # O submit só dispara quando clicar no botão (ou Enter)
+            pesquisar = st.form_submit_button("🔎 Pesquisar")
+
+        # Executa a busca apenas quando o botão for pressionado
+        if pesquisar:
+            if termo.strip() == "":
+                st.warning("Digite um termo de busca antes de pesquisar.")
+            else:
+                res = buscar_dados(termo, v_selecionada, tipo)
+                if res.empty:
+                    st.info("Nenhum resultado encontrado para o termo informado.")
+                else:
+                    st.dataframe(res, use_container_width=True, hide_index=True)
         else:
-            st.caption("Digite um termo de busca para visualizar resultados.")
+            st.caption("Preencha os campos e clique em **🔎 Pesquisar** para ver os resultados.")
     else:
         st.warning("Nenhuma versão disponível. Importe dados na aba '📥 Importar'.")
 
