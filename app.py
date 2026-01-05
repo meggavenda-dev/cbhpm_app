@@ -256,26 +256,13 @@ abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comp
 
 # --- 1. IMPORTAR ---
 with abas[0]:
-    v_imp = st.text_input("Nome da Versão (ex: CBHPM 2024)", key="txt_v_imp")
-    arqs = st.file_uploader("Upload arquivos", accept_multiple_files=True, key="file_up_imp")
-    if st.button("Executar Importação", key="btn_importar_final"):
+    v_imp = st.text_input("Nome da Versão (ex: CBHPM 2024)", key="txt_v_imp_aba")
+    arqs = st.file_uploader("Upload arquivos", accept_multiple_files=True, key="file_up_imp_aba")
+    if st.button("Executar Importação", key="btn_importar_exec"):
         if importar(arqs, v_imp):
             st.success(f"Tabela '{v_imp}' importada!")
-            st.balloons()
-            st.cache_data.clear()  # limpa qualquer cache residual
-            
-            # Atualiza a lista de versões no estado da sessão
-            st.session_state.lista_versoes = versoes()
-
-# Sidebar usando session_state para sempre ter a lista atualizada
-if 'lista_versoes' not in st.session_state:
-    st.session_state.lista_versoes = versoes()
-
-v_selecionada = st.sidebar.selectbox(
-    "Tabela CBHPM Ativa", 
-    st.session_state.lista_versoes, 
-    key="v_global"
-) if st.session_state.lista_versoes else None
+            st.cache_data.clear()  
+            st.rerun() # Use o rerun atualizado
 
 # --- 2. CONSULTAR ---
 with abas[1]:
