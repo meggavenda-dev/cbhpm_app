@@ -263,11 +263,13 @@ with abas[1]:
             st.dataframe(res, use_container_width=True, hide_index=True)
 
 # --- 3. CALCULAR ---
+# Guarda a aba ativa
+st.session_state.aba_ativa = 2  # índice da aba de cálculo
+
 with abas[2]:
     if v_selecionada:
         st.subheader("🧮 Calculadora de Honorários CBHPM")
         
-        # Estilização CSS para cartões de resultado
         st.markdown("""
             <style>
             [data-testid="stMetricValue"] { font-size: 1.8rem; color: #007bff; }
@@ -281,7 +283,8 @@ with abas[2]:
             </style>
         """, unsafe_allow_html=True)
 
-        with st.container(border=True):
+        # Formulário para evitar rerun completo
+        with st.form("form_calc"):
             col_cod, col_ajuste = st.columns([2, 1])
             cod_calc = col_cod.text_input("Código do Procedimento", placeholder="Ex: 10101012", key="in_calc")
             infla = col_ajuste.number_input("Ajuste Adicional (%)", 0.0, step=0.5, key="in_infla")
@@ -290,8 +293,8 @@ with abas[2]:
             uco_v = c1.number_input("Valor UCO (R$)", 1.0, step=0.01, format="%.4f", key="in_uco_val")
             filme_v = c2.number_input("Valor Filme (R$)", 21.70, step=0.01, format="%.2f", key="in_filme_val")
 
-            # O segredo para não pular de aba é não usar st.rerun() dentro do bloco de cálculo
-            calcular_btn = st.button("Calcular Agora", type="primary", use_container_width=True)
+            # Botão dentro do form evita rerun completo
+            calcular_btn = st.form_submit_button("Calcular Agora")
 
         if calcular_btn:
             if not cod_calc:
@@ -307,7 +310,7 @@ with abas[2]:
                     filme_calc = p['filme'] * filme_v * f
                     total = porte_calc + uco_calc + filme_calc
 
-                    # Apresentação Visual Melhorada
+                    # Resultado visual
                     st.markdown(f"""
                         <div class="res-card">
                             <small>Procedimento encontrado em <b>{v_selecionada}</b></small><br>
@@ -319,7 +322,6 @@ with abas[2]:
                     c_porte.metric("Porte", f"R$ {porte_calc:,.2f}")
                     c_uco.metric("UCO", f"R$ {uco_calc:,.2f}")
                     c_filme.metric("Filme", f"R$ {filme_calc:,.2f}")
-                    # Destaca o total com delta positivo/negativo
                     c_total.metric("TOTAL FINAL", f"R$ {total:,.2f}", delta=f"{infla:.2f}%" if infla != 0 else None)
                     
                     st.divider()
