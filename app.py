@@ -267,18 +267,43 @@ with abas[0]:
                     st.session_state.processando = False
                     st.rerun()
 
-# --- 2. CONSULTAR ---
+# --- 2. CONSULTAR (CORRIGIDO COM BOTÃO DE BUSCA) ---
 with abas[1]:
     st.session_state.aba_ativa_idx = 1
     if v_selecionada:
-        st.info(f"Pesquisando na Versão: {v_selecionada}")
+        st.info(f"🔍 Pesquisando na Versão: **{v_selecionada}**")
+        
+        # Layout de busca
         c1, c2 = st.columns([1, 3])
-        tipo = c1.radio("Busca por", ["Código", "Descrição"], horizontal=True)
-        termo = c2.text_input("Digite o termo de busca...")
-        if termo:
-            res = buscar_dados(termo, v_selecionada, tipo)
-            st.dataframe(res, use_container_width=True, hide_index=True)
-
+        tipo = c1.radio("Busca por", ["Código", "Descrição"], horizontal=True, key="search_type")
+        termo = c2.text_input("Digite o código ou parte da descrição...", placeholder="Ex: 10101012 ou Consulta", key="search_term")
+        
+        # Botão de busca
+        if st.button("🔍 Realizar Busca", type="primary", use_container_width=True):
+            if termo:
+                with st.spinner("Buscando no banco de dados..."):
+                    res = buscar_dados(termo, v_selecionada, tipo)
+                    
+                    if not res.empty:
+                        st.write(f"✅ Foram encontrados {len(res)} resultados:")
+                        st.dataframe(
+                            res, 
+                            use_container_width=True, 
+                            hide_index=True,
+                            column_config={
+                                "codigo": st.column_config.TextColumn("Código"),
+                                "descricao": st.column_config.TextColumn("Descrição", width="large"),
+                                "porte": st.column_config.NumberColumn("Porte", format="%.2f"),
+                                "uco": st.column_config.NumberColumn("UCO", format="%.4f"),
+                                "filme": st.column_config.NumberColumn("Filme", format="%.2f")
+                            }
+                        )
+                    else:
+                        st.warning("⚠️ Nenhum registro encontrado para este termo.")
+            else:
+                st.error("❗ Por favor, digite um termo para buscar.")
+    else:
+        st.warning("⚠️ Selecione uma 'Tabela CBHPM Ativa' na barra lateral primeiro.")
 # --- 3. CALCULAR ---
 # Guarda a aba ativa
 st.session_state.aba_ativa = 2  # índice da aba de cálculo
