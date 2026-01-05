@@ -325,7 +325,7 @@ with abas[2]:
                     c_total.metric("TOTAL FINAL", f"R$ {total:,.2f}", delta=f"{infla:.2f}%" if infla != 0 else None)
                     
                     st.divider()
-                    st.caption(f"Cálculo baseado em: Porte base: {p['porte']} | UCO: {p['uco']} unidades | Filme: {p['filme']} m²")
+
                 else:
                     st.error(f"O código '{cod_calc}' não foi encontrado na tabela {v_selecionada}.")
         
