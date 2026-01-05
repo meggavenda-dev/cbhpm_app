@@ -250,8 +250,15 @@ def buscar_dados(termo, versao, tipo):
 # INTERFACE STREAMLIT
 # =====================================================
 baixar_banco()
-lista_versoes = versoes()
-v_selecionada = st.sidebar.selectbox("Tabela CBHPM Ativa", lista_versoes, key="v_global") if lista_versoes else None
+# Sidebar usando session_state para sempre ter a lista atualizada
+if 'lista_versoes' not in st.session_state:
+    st.session_state.lista_versoes = versoes()
+
+v_selecionada = st.sidebar.selectbox(
+    "Tabela CBHPM Ativa", 
+    st.session_state.lista_versoes, 
+    key="v_global"
+) if st.session_state.lista_versoes else None
 abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"])
 
 # --- 1. IMPORTAR ---
@@ -267,15 +274,6 @@ with abas[0]:
             # Atualiza a lista de versões no estado da sessão
             st.session_state.lista_versoes = versoes()
 
-# Verifique se não há outro st.sidebar.selectbox no código com a mesma key
-if lista_versoes:
-    v_selecionada = st.sidebar.selectbox(
-        "Tabela CBHPM Ativa", 
-        lista_versoes, 
-        key="v_global_sidebar" # Mudei o nome da key para garantir
-    )
-else:
-    v_selecionada = None
 
 # --- 2. CONSULTAR ---
 with abas[1]:
