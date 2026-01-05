@@ -262,8 +262,9 @@ with abas[0]:
         if importar(arqs, v_imp):
             st.success(f"Tabela '{v_imp}' importada!")
             st.balloons()
-            st.cache_data.clear()
-            # REMOVIDO: st.rerun() daqui evita o pulo. O Streamlit atualizará os componentes necessários.
+            st.cache_data.clear()  # limpa qualquer cache residual
+            lista_versoes = versoes()  # atualiza imediatamente
+            st.experimental_rerun()   # força atualização do sidebar
 
 # --- 2. CONSULTAR ---
 with abas[1]:
