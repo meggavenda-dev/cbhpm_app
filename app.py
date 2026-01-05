@@ -181,6 +181,37 @@ def importar(arquivos, versao):
     salvar_banco_github(f"Importação {versao}")
 
 # =====================================================
+# CONSULTAS
+# =====================================================
+def versoes():
+    return pd.read_sql(
+        "SELECT DISTINCT versao FROM procedimentos ORDER BY versao",
+        conn()
+    )["versao"].tolist()
+
+def buscar_codigo(codigo, versao):
+    return pd.read_sql(
+        """
+        SELECT codigo, descricao, porte, uco, filme
+        FROM procedimentos
+        WHERE codigo LIKE ? AND versao = ?
+        """,
+        conn(),
+        params=(f"%{codigo}%", versao)
+    )
+
+def buscar_descricao(desc, versao):
+    return pd.read_sql(
+        """
+        SELECT codigo, descricao, porte, uco, filme
+        FROM procedimentos
+        WHERE descricao LIKE ? AND versao = ?
+        """,
+        conn(),
+        params=(f"%{desc}%", versao)
+    )
+
+# =====================================================
 # INICIALIZAÇÃO
 # =====================================================
 baixar_banco()
@@ -191,7 +222,13 @@ criar_tabelas()
 # =====================================================
 st.title("CBHPM • Gestão Inteligente")
 
-abas = st.tabs(["📥 Importar", "📊 Consultar", "⚖️ Comparar versões", "📤 Exportar"])
+abas = st.tabs([
+    "📥 Importar",
+    "📋 Consultar",
+    "🧮 Calcular",
+    "⚖️ Comparar versões",
+    "📤 Exportar"
+])
 
 # ---------------- IMPORTAR ----------------
 with abas[0]:
@@ -201,38 +238,59 @@ with abas[0]:
         importar(arquivos, versao)
         st.success("Importação concluída")
 
-# ---------------- CONSULTAR + CÁLCULO ----------------
+# ---------------- CONSULTAR ----------------
 with abas[1]:
-    con = conn()
-    df = pd.read_sql("SELECT * FROM procedimentos", con)
-    con.close()
+    v = st.selectbox("Tabela CBHPM", versoes())
+    tipo = st.radio("Buscar por", ["Código", "Descrição"])
+    termo = st.text_input("Termo de busca")
 
-    uco_valor = st.number_input("Valor da UCO", value=1.0)
-    filme_valor = st.number_input("Valor do Filme", value=1.0)
+    if st.button("Buscar"):
+        df = buscar_codigo(termo, v) if tipo == "Código" else buscar_descricao(termo, v)
+        st.dataframe(df, use_container_width=True)
 
-    df["valor_porte"] = df["porte"]
-    df["valor_uco"] = df["uco"] * uco_valor
-    df["valor_filme"] = df["filme"] * filme_valor
-    df["valor_total"] = df["valor_porte"] + df["valor_uco"] + df["valor_filme"]
-
-    st.dataframe(df)
-
-# ---------------- COMPARAR VERSÕES ----------------
+# ---------------- CALCULAR ----------------
 with abas[2]:
-    con = conn()
-    versoes = pd.read_sql("SELECT DISTINCT versao FROM procedimentos", con)["versao"].tolist()
-    v1 = st.selectbox("Versão A", versoes)
-    v2 = st.selectbox("Versão B", versoes)
+    v = st.selectbox("Tabela CBHPM", versoes())
+    codigo = st.text_input("Código do procedimento")
 
-    df1 = pd.read_sql("SELECT * FROM procedimentos WHERE versao=?", con, params=(v1,))
-    df2 = pd.read_sql("SELECT * FROM procedimentos WHERE versao=?", con, params=(v2,))
-    con.close()
+    col1, col2, col3 = st.columns(3)
+    valor_uco = col1.number_input("Valor da UCO", value=1.0)
+    valor_filme = col2.number_input("Valor do Filme", value=21.70)
+    inflator = col3.number_input("Inflator (%)", value=0.0)
 
-    comp = df1.merge(df2, on="codigo", how="outer", suffixes=("_A", "_B"))
-    st.dataframe(comp)
+    if st.button("Calcular"):
+        df = buscar_codigo(codigo, v)
+        if df.empty:
+            st.warning("Procedimento não encontrado")
+        else:
+            p = df.iloc[0]
+            fator = 1 + inflator / 100
+
+            porte = p["porte"] * fator
+            uco = p["uco"] * valor_uco * fator
+            filme = p["filme"] * valor_filme * fator
+            total = porte + uco + filme
+
+            st.success(p["descricao"])
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Porte", f"R$ {porte:,.2f}")
+            c2.metric("UCO", f"R$ {uco:,.2f}")
+            c3.metric("Filme", f"R$ {filme:,.2f}")
+            c4.metric("💰 Total", f"R$ {total:,.2f}")
+
+# ---------------- COMPARAR ----------------
+with abas[3]:
+    v1 = st.selectbox("Versão A", versoes())
+    v2 = st.selectbox("Versão B", versoes())
+    df1 = buscar_codigo("", v1)
+    df2 = buscar_codigo("", v2).rename(
+        columns={"porte": "porte_B", "uco": "uco_B", "filme": "filme_B"}
+    )
+    comp = df1.merge(df2, on="codigo")
+    st.dataframe(comp, use_container_width=True)
 
 # ---------------- EXPORTAR ----------------
-with abas[3]:
+with abas[4]:
     tabelas = ["procedimentos", "arquivos_importados"]
     escolha = st.multiselect("Tabelas", tabelas)
 
