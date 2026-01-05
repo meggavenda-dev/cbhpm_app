@@ -293,46 +293,35 @@ with abas[2]:
 # --- 4. COMPARAR ---
 with abas[3]:
     if len(lista_versoes) >= 2:
-        col_v1, col_v2 = st.columns(2)
-        va = col_v1.selectbox("Base (Antiga)", lista_versoes, key="va_comp",
-                              on_change=lambda: st.session_state.update({"comparacao_realizada": False}))
-        vb = col_v2.selectbox("Comparação (Nova)", lista_versoes, key="vb_comp",
-                              on_change=lambda: st.session_state.update({"comparacao_realizada": False}))
+        # ... (seu código de seleção de va e vb) ...
         
-        if st.button("Analisar Diferenças", key="btn_analisar_comp"):
-            st.session_state.comparacao_realizada = True
-            
         if st.session_state.comparacao_realizada:
-            dfa = buscar_dados("", va, "Código")
-            dfb = buscar_dados("", vb, "Código").rename(columns={
-                "porte": "porte_B",
-                "uco": "uco_B",
-                "filme": "filme_B",
-                "descricao": "descricao_B"
-            })
-            comp = dfa.merge(dfb, on="codigo")
+            # ... (seu código de merge e cálculo de perc_var) ...
+            
             if not comp.empty:
-                comp['perc_var'] = comp.apply(
-                    lambda row: ((row['porte_B'] - row['porte']) / row['porte'] * 100) if row['porte'] != 0 else 0,
-                    axis=1
-                )
-
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Itens em Comum", len(comp))
-                m2.metric("Variação Média", f"{comp['perc_var'].mean():.2f}%")
-                m3.metric("Com Aumento", len(comp[comp['perc_var'] > 0]))
+                st.subheader("📊 Análise de Reajustes")
                 
-                comp['Grupo'] = comp['codigo'].astype(str).str[:2]
-                resumo = comp.groupby('Grupo')['perc_var'].mean().reset_index()
-                chart = alt.Chart(resumo).mark_bar().encode(
-                    x=alt.X('Grupo:N', sort='-y', title="Grupo"),
-                    y=alt.Y('perc_var:Q', title="Variação %"),
-                    color=alt.condition(alt.datum.perc_var > 0, alt.value('steelblue'), alt.value('orange'))
-                ).properties(height=350)
-                st.altair_chart(chart, use_container_width=True)
-                st.dataframe(comp[['codigo', 'descricao', 'porte', 'porte_B', 'perc_var']], use_container_width=True)
+                # Exibição da tabela configurada para não cortar dados
+                st.dataframe(
+                    comp[['codigo', 'descricao', 'porte', 'porte_B', 'perc_var']], 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={
+                        "codigo": st.column_config.TextColumn("Código", width="small"),
+                        "descricao": st.column_config.TextColumn(
+                            "Descrição do Procedimento", 
+                            width="large" # Isso impede que a descrição corte
+                        ),
+                        "porte": st.column_config.NumberColumn(f"Porte ({va})", format="%.2f"),
+                        "porte_B": st.column_config.NumberColumn(f"Porte ({vb})", format="%.2f"),
+                        "perc_var": st.column_config.NumberColumn(
+                            "Variação %", 
+                            format="%.2f%%"
+                        )
+                    }
+                )
             else:
-                st.warning("Nenhuma coincidência encontrada.")
+                st.warning("Nenhuma coincidência encontrada entre as tabelas.")
 
 # --- 5. EXPORTAR ---
 with abas[4]:
