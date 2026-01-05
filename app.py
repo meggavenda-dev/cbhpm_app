@@ -155,7 +155,7 @@ def excluir_versao(versao):
         return total
 
 # =====================================================
-# IMPORTAÇÃO
+# IMPORTAÇÃO (CORRIGIDA PARA ERRO DE ENCODING)
 # =====================================================
 def importar(arquivos, versao):
     if not versao:
@@ -179,7 +179,23 @@ def importar(arquivos, versao):
                 st.warning(f"O conteúdo de '{arq.name}' já foi importado.")
                 continue
 
-            df = pd.read_csv(arq, sep=";", encoding="utf-8") if arq.name.lower().endswith(".csv") else pd.read_excel(arq)
+            # --- CORREÇÃO DE ENCODING AQUI ---
+            try:
+                if arq.name.lower().endswith(".csv"):
+                    try:
+                        # Tenta UTF-8 primeiro
+                        df = pd.read_csv(arq, sep=";", encoding="utf-8")
+                    except UnicodeDecodeError:
+                        # Se falhar, tenta Latin-1 (comum em arquivos BR)
+                        arq.seek(0)
+                        df = pd.read_csv(arq, sep=";", encoding="latin-1")
+                else:
+                    df = pd.read_excel(arq)
+            except Exception as e:
+                st.error(f"Erro ao ler o arquivo {arq.name}: {e}")
+                continue
+            # ---------------------------------
+
             df.columns = [c.strip() for c in df.columns]
 
             dados_lista = []
