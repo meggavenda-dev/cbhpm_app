@@ -19,7 +19,7 @@ os.makedirs("data", exist_ok=True)
 
 if 'comparacao_realizada' not in st.session_state:
     st.session_state.comparacao_realizada = False
-
+    
 # =====================================================
 # CONEXÃO COM SQLITE (cacheada)
 # =====================================================
@@ -146,18 +146,17 @@ def registrar_arquivo(h, versao):
         cur.execute("INSERT OR IGNORE INTO arquivos_importados VALUES (NULL,?,?,?)", (h, versao, datetime.now().isoformat()))
 
 def excluir_versao(versao):
-    # Usamos o context manager para garantir o COMMIT
     with gerenciar_db() as con:
         cur = con.cursor()
-        # 1. Remove os procedimentos
+        # Remove os dados da tabela de procedimentos
         cur.execute("DELETE FROM procedimentos WHERE versao=?", (versao,))
-        removidos = cur.rowcount
-        # 2. Remove o registro de importação para permitir re-importar o mesmo arquivo se desejar
+        total = cur.rowcount
+        # Remove o registro do arquivo para permitir re-importação futura
         cur.execute("DELETE FROM arquivos_importados WHERE versao=?", (versao,))
-        
-    # 3. Sincroniza com o GitHub IMEDIATAMENTE
-    salvar_banco_github(f"Exclusão definitiva da versão: {versao}")
-    return removidos
+    
+    # Sincroniza o arquivo .db com o GitHub após a alteração
+    salvar_banco_github(f"Exclusão da versão {versao}")
+    return total
 
 # =====================================================
 # IMPORTAÇÃO (CORRIGIDA PARA ERRO DE ENCODING)
@@ -250,11 +249,6 @@ def buscar_dados(termo, versao, tipo):
 # INTERFACE STREAMLIT
 # =====================================================
 baixar_banco()
-criar_tabelas()
-
-st.set_page_config(page_title="CBHPM Gestão", layout="wide")
-st.title("CBHPM • Gestão Inteligente")
-
 lista_versoes = versoes()
 v_selecionada = st.sidebar.selectbox("Tabela CBHPM Ativa", lista_versoes, key="v_global") if lista_versoes else None
 abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"])
@@ -349,22 +343,23 @@ with abas[4]:
         st.download_button("Clique aqui para baixar", output.getvalue(), "cbhpm_export.xlsx", key="dl_btn")
 
 # --- 6. GERENCIAR ---
-with abas[5]:
+with abas[5]: # ABA GERENCIAR
     if lista_versoes:
-        st.subheader("🗑️ Zona de Exclusão")
-        v_del = st.selectbox("Selecione a versão para apagar do banco de dados", lista_versoes, key="v_del_aba")
+        st.subheader("🗑️ Gerenciar Dados")
+        v_del = st.selectbox("Selecione a versão para excluir permanentemente", lista_versoes, key="v_del_aba")
         
-        # Adicionar uma caixa de confirmação extra para segurança
-        confirmar_extra = st.checkbox(f"Eu entendo que isso apagará todos os dados da {v_del}")
+        confirmar = st.checkbox(f"Confirmo que desejo apagar todos os registros da versão {v_del}")
         
         if st.button("Confirmar Exclusão Definitiva", type="primary"):
-            if confirmar_extra:
-                with st.spinner(f"Apagando {v_del} e sincronizando com a nuvem..."):
-                    n_registros = excluir_versao(v_del)
-                    # Limpa o cache de TODAS as funções decoradas com @st.cache_data
-                    st.cache_data.clear() 
-                    st.success(f"Sucesso! {n_registros} registros da versão '{v_del}' foram removidos.")
-                    time.sleep(2) # Pausa para o usuário ler a mensagem
-                    st.rerun() # Reinicia o app para atualizar a barra lateral
+            if confirmar:
+                with st.spinner("Excluindo dados e atualizando nuvem..."):
+                    n_removidos = excluir_versao(v_del)
+                    # Limpa o cache para que a lista de versões na barra lateral atualize
+                    st.cache_data.clear()
+                    st.success(f"Sucesso! {n_removidos} registros removidos.")
+                    time.sleep(2) # Agora o import 'time' existe!
+                    st.rerun() 
             else:
-                st.warning("Você precisa marcar a caixa de confirmação para prosseguir.")
+                st.warning("Marque a caixa de confirmação para prosseguir.")
+    else:
+        st.info("Nenhuma versão encontrada no banco de dados.")
