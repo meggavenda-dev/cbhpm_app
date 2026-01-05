@@ -1,4 +1,3 @@
-
 import os
 import base64
 import hashlib
@@ -23,9 +22,9 @@ os.makedirs("data", exist_ok=True)
 if 'comparacao_realizada' not in st.session_state:
     st.session_state.comparacao_realizada = False
 
-# Aba inicial: Consultar (evita pular para Importar)
-if "aba_atual" not in st.session_state:
-    st.session_state.aba_atual = "📋 Consultar"
+# Aba preferida (controla índice do radio). Começa em "Consultar".
+if "aba_pref" not in st.session_state:
+    st.session_state.aba_pref = "📋 Consultar"
 
 # =====================================================
 # CONEXÃO E BANCO DE DADOS
@@ -257,11 +256,11 @@ st.title("⚖️ CBHPM • Auditoria e Gestão")
 # =====================================================
 opcoes = ["📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar", "📥 Importar"]
 
+# O índice é controlado por aba_pref (sem key para evitar conflito)
 aba_atual = st.sidebar.radio(
     "Navegação",
     opcoes,
-    index=opcoes.index(st.session_state.aba_atual),
-    key="aba_atual"
+    index=opcoes.index(st.session_state.get("aba_pref", "📋 Consultar"))
 )
 
 # =====================================================
@@ -314,8 +313,8 @@ if aba_atual == "📥 Importar":
                 st.session_state.temp_arqs = None
                 st.session_state.temp_v_imp = ""
 
-                # Após importar, vá para Consultar por padrão
-                st.session_state.aba_atual = "📋 Consultar"
+                # Após importar, ajustar aba preferida para Consultar e rerun
+                st.session_state.aba_pref = "📋 Consultar"
                 time.sleep(1)
                 st.rerun()
             else:
@@ -497,8 +496,11 @@ if aba_atual == "🗑️ Gerenciar":
                 st.cache_data.clear()
                 st.success("Versão removida!")
                 time.sleep(1)
+                # Após remoção, forçamos voltar para Consultar
+                st.session_state.aba_pref = "📋 Consultar"
                 st.rerun()
             else:
                 st.info("Marque a confirmação para prosseguir.")
     else:
         st.warning("Nenhuma versão disponível para gerenciar. Importe dados na aba '📥 Importar'.")
+``
