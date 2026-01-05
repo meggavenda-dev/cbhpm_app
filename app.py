@@ -195,31 +195,24 @@ abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comp
 # --- 1. IMPORTAR ---
 with abas[0]:
     st.subheader("Carregar Novos Dados")
-    
-    # Campo para o nome da versão
-    v_imp = st.text_input("Nome da Versão (ex: CBHPM 2024)", key="txt_v_imp")
-    
-    # Upload de arquivos
-    arqs = st.file_uploader("Upload arquivos (CSV ou Excel)", accept_multiple_files=True, key="file_up_imp")
-    
-    # VERIFICAÇÃO ATIVA: Se houver arquivos no buffer, mostramos o status e o botão
-    if arqs:
-        st.info(f"📂 {len(arqs)} arquivo(s) carregados e prontos para processamento.")
+
+    with st.form("form_importacao"):
+        v_imp = st.text_input("Nome da Versão (ex: CBHPM 2024)")
+        arqs = st.file_uploader("Upload arquivos (CSV ou Excel)", accept_multiple_files=True)
+        submitted = st.form_submit_button("🚀 Iniciar Importação Agora")
         
-        # O botão agora só aparece ou fica habilitado se houver arquivos, 
-        # garantindo que o buffer já foi lido pelo Streamlit
-        if st.button("🚀 Iniciar Importação Agora", key="btn_imp_exec"):
+        if submitted:
             if not v_imp:
                 st.error("Por favor, dê um nome para esta versão antes de importar.")
+            elif not arqs:
+                st.warning("Nenhum arquivo selecionado.")
             else:
                 with st.spinner("Processando dados e sincronizando..."):
                     if importar(arqs, v_imp):
                         st.success("Importação concluída com sucesso!")
-                        # Limpa o cache para que a nova versão apareça imediatamente na lista
                         st.cache_data.clear()
-                        # Pequena pausa para o usuário ver o sucesso
-                        time.sleep(1.5)
-                        # Força o recarregamento total da interface
+                        st.session_state.lista_versoes = versoes()
+                        time.sleep(1)
                         st.rerun()
     else:
         st.warning("Aguardando seleção de arquivos para importar.")
