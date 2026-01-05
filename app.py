@@ -503,4 +503,3 @@ if aba_atual == "🗑️ Gerenciar":
                 st.info("Marque a confirmação para prosseguir.")
     else:
         st.warning("Nenhuma versão disponível para gerenciar. Importe dados na aba '📥 Importar'.")
-``
