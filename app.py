@@ -343,16 +343,23 @@ with abas[2]:
 # --- 4. COMPARAR ---
 with abas[3]:
     if len(lista_v) >= 2:
+        # Seleciona as versões
         col1, col2 = st.columns(2)
         v1 = col1.selectbox("Versão Anterior", lista_v, key="v1")
         v2 = col2.selectbox("Versão Atual", lista_v, key="v2")
         
+        # Botão de análise: mantém a aba ativa
         if st.button("Analisar Reajustes"):
             st.session_state.comparacao_realizada = True
-        
+            st.session_state.aba_ativa_idx = 3  # salva a aba ativa
+
+        # Mantém a aba ativa mesmo após rerun
         if st.session_state.comparacao_realizada:
+            st.session_state.aba_ativa_idx = 3  # reforça aba ativa
             df1 = buscar_dados("", v1, "Código")
-            df2 = buscar_dados("", v2, "Código").rename(columns={"porte":"porte_2", "uco":"uco_2", "filme":"filme_2", "descricao":"desc_2"})
+            df2 = buscar_dados("", v2, "Código").rename(
+                columns={"porte":"porte_2", "uco":"uco_2", "filme":"filme_2", "descricao":"desc_2"}
+            )
             comp = df1.merge(df2, on="codigo")
             
             if not comp.empty:
@@ -376,7 +383,8 @@ with abas[3]:
                 st.dataframe(comp[['codigo', 'descricao', 'porte', 'porte_2', 'var_porte']], 
                              use_container_width=True, hide_index=True,
                              column_config={"var_porte": st.column_config.NumberColumn("Variação %", format="%.2f%%")})
-    else: st.warning("Necessário ao menos 2 versões para comparar.")
+    else:
+        st.warning("Necessário ao menos 2 versões para comparar.")
 
 
 # --- 5. EXPORTAR ---
