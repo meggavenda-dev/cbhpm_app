@@ -196,9 +196,24 @@ v_selecionada = st.sidebar.selectbox("Tabela Ativa", lista_v, key="v_global") if
 
 abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"])
 
-# Força a aba ativa correta
-abas[st.session_state.aba_ativa_idx]
+# Radio invisível para controlar aba ativa
+st.session_state.aba_ativa_idx = st.radio(
+    label="",
+    options=list(range(len(abas_nome))),
+    index=st.session_state.aba_ativa_idx,
+    format_func=lambda i: abas_nome[i],
+    horizontal=True
+)
+# Esconde o radio
+st.markdown("<style>div[data-baseweb='radio']{display:none;}</style>", unsafe_allow_html=True)
 
+# Cria abas com base no radio
+abas = st.tabs(abas_nome)
+
+# Abre a aba correta
+with abas[st.session_state.aba_ativa_idx]:
+    st.write("")  # nada aqui, só para “ativar” a aba
+   
 # --- 1. IMPORTAR ---
 # --- 1. IMPORTAR (VERSÃO FINAL - VISUAL LIMPO) ---
 # --- 1. IMPORTAR (VERSÃO CORRIGIDA - SEM TELA BRANCA) ---
