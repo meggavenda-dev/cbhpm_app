@@ -256,34 +256,14 @@ abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comp
 
 # --- 1. IMPORTAR ---
 with abas[0]:
-    st.subheader("📥 Nova Importação CBHPM")
-    
-    # Campo de texto para a versão
-    versao_importacao = st.text_input("Nome da Versão (ex: CBHPM 2024)", key="txt_v_imp")
-    
-    # Upload de arquivos
-    arquivos = st.file_uploader("Arraste os arquivos aqui", accept_multiple_files=True, key="file_up_imp")
-    
-    # Se houver arquivos, mostramos um resumo antes do botão
-    if arquivos:
-        st.info(f"📂 {len(arquivos)} arquivo(s) selecionado(s) e pronto(s) para processamento.")
-        
-        # O botão agora serve apenas como o 'disparo' final, 
-        # mas os arquivos já estão 'presos' no estado da sessão.
-        if st.button("🚀 Confirmar e Executar Importação", key="btn_importar_final"):
-            with st.spinner("Processando dados..."):
-                if importar(arquivos, versao_importacao):
-                    st.success(f"Tabela '{versao_importacao}' importada com sucesso!")
-                    st.balloons()
-                    
-                    # Limpa o cache para atualizar as listas de seleção nas outras abas
-                    st.cache_data.clear()
-                    
-                    # Pausa curta e recarregamento para atualizar a sidebar
-                    time.sleep(1)
-                    st.rerun()
-    else:
-        st.warning("Aguardando seleção de arquivos...")
+    v_imp = st.text_input("Nome da Versão (ex: CBHPM 2024)", key="txt_v_imp")
+    arqs = st.file_uploader("Upload arquivos", accept_multiple_files=True, key="file_up_imp")
+    if st.button("Executar Importação", key="btn_importar_final"):
+        if importar(arqs, v_imp):
+            st.success(f"Tabela '{v_imp}' importada!")
+            st.balloons()
+            st.cache_data.clear()
+            # REMOVIDO: st.rerun() daqui evita o pulo. O Streamlit atualizará os componentes necessários.
 
 # --- 2. CONSULTAR ---
 with abas[1]:
