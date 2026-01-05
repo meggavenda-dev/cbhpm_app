@@ -63,6 +63,14 @@ def salvar_banco_github(msg="Atualização automática do banco CBHPM"):
     if r2.status_code not in (200, 201):
         st.error(f"Erro ao salvar no GitHub: {r2.status_code} - {r2.text}")
 
+def criar_tabelas():
+    con = conn()
+    c = con.cursor()
+    ...
+    con.commit()
+    con.close()
+
+# ⬇️ AGORA SIM, PODE CHAMAR
 baixar_banco()
 criar_tabelas()
 
