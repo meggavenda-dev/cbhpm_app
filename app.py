@@ -466,8 +466,9 @@ if aba_atual == "📋 Consultar":
         st.warning("Nenhuma versão disponível. Importe dados na aba '📥 Importar'.")
 
 
+
 # =====================================================
-# 3) CALCULAR  (UCO automático; sem métrica de UCO)
+# 3) CALCULAR  (UCO automático; mantém métrica de UCO no resultado)
 # =====================================================
 if aba_atual == "🧮 Calcular":
     lista_v = versoes()
@@ -489,7 +490,7 @@ if aba_atual == "🧮 Calcular":
             </style>
         """, unsafe_allow_html=True)
 
-        # Valor monetário da UCO aplicado automaticamente (não exibido como métrica)
+        # Valor monetário da UCO aplicado automaticamente (sem campo de input)
         UCO_VALOR_APLICADO = float(st.secrets.get("UCO_VALOR", 1.00))
 
         with st.form("form_calc"):
@@ -497,7 +498,7 @@ if aba_atual == "🧮 Calcular":
             cod_calc = col_cod.text_input("Código do Procedimento", placeholder="Ex: 10101012", key="in_calc")
             infla = col_ajuste.number_input("Ajuste Adicional (%)", 0.0, step=0.5, key="in_infla")
 
-            # Mantido apenas o input de Filme
+            # Mantém apenas o input de Filme
             filme_v = st.number_input("Valor Filme (R$)", 21.70, step=0.01, format="%.2f", key="in_filme_val")
 
             calcular_btn = st.form_submit_button("Calcular Agora")
@@ -512,7 +513,8 @@ if aba_atual == "🧮 Calcular":
                     f = 1 + (infla/100)
 
                     porte_calc = p['porte'] * f
-                    uco_calc = p['uco'] * UCO_VALOR_APLICADO * f   # calculado, mas não exibido como métrica
+                    # UCO calculado automaticamente (mantemos a métrica no resultado)
+                    uco_calc = p['uco'] * UCO_VALOR_APLICADO * f
                     filme_calc = p['filme'] * filme_v * f
                     total = porte_calc + uco_calc + filme_calc
 
@@ -523,9 +525,10 @@ if aba_atual == "🧮 Calcular":
                         </div>
                     """, unsafe_allow_html=True)
 
-                    # Exibe métricas apenas de Porte, Filme e Total (UCO omitido)
-                    c_porte, c_filme, c_total = st.columns(3)
+                    # Métricas exibidas: Porte, UCO, Filme e TOTAL
+                    c_porte, c_uco, c_filme, c_total = st.columns(4)
                     c_porte.metric("Porte", f"R$ {porte_calc:,.2f}")
+                    c_uco.metric("UCO", f"R$ {uco_calc:,.2f}")
                     c_filme.metric("Filme", f"R$ {filme_calc:,.2f}")
                     c_total.metric("TOTAL FINAL", f"R$ {total:,.2f}", delta=f"{infla:.2f}%" if infla != 0 else None)
 
