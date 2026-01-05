@@ -190,40 +190,29 @@ st.set_page_config(page_title="CBHPM Gestão Inteligente", layout="wide")
 st.title("⚖️ CBHPM • Auditoria e Gestão")
 
 lista_v = versoes()
-v_selecionada = st.sidebar.selectbox("Tabela Ativa", lista_v, key="v_global") if lista_v else None
+v_selecionada = st.sidebar.selectbox("Tabela CBHPM Ativa", lista_v, key="v_global") if lista_v else None
 
-# Criar as abas com uma chave (key) para persistência
+# --- SOLUÇÃO DO ERRO ---
+# 1. Definir os nomes primeiro
+abas_nome = ["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"]
 
-abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"])
+# 2. Criar o rádio invisível para persistência (Opcional, mas deve vir antes das abas)
+# Nota: Se as abas estão pulando, o uso de 'key' no st.tabs é mais simples em versões novas do Streamlit
+aba_selecionada_idx = st.session_state.aba_ativa_idx
 
-# Radio invisível para controlar aba ativa
-st.session_state.aba_ativa_idx = st.radio(
-    label="",
-    options=list(range(len(abas_nome))),
-    index=st.session_state.aba_ativa_idx,
-    format_func=lambda i: abas_nome[i],
-    horizontal=True
-)
-# Esconde o radio
-st.markdown("<style>div[data-baseweb='radio']{display:none;}</style>", unsafe_allow_html=True)
-
-# Cria as abas com Streamlit
+# 3. Criar as abas fisicamente
 abas = st.tabs(abas_nome)
 
-# Radio invisível para controlar aba ativa
-st.session_state.aba_ativa_idx = st.radio(
-    label="",
-    options=list(range(len(abas_nome))),
-    index=st.session_state.aba_ativa_idx,
-    format_func=lambda i: abas_nome[i],
-    horizontal=True
-)
+# Lógica para registrar qual aba está aberta (ajuda a evitar o pulo)
+def registrar_aba(nome):
+    st.session_state.aba_ativa_idx = abas_nome.index(nome)
    
 # --- 1. IMPORTAR ---
 # --- 1. IMPORTAR (VERSÃO FINAL - VISUAL LIMPO) ---
 # --- 1. IMPORTAR (VERSÃO CORRIGIDA - SEM TELA BRANCA) ---
 # --- 1. IMPORTAR (RESOLVIDO: SEM NAMEERROR E SEM TELA BRANCA) ---
 with abas[0]:
+    st.session_state.aba_ativa_idx = 0
     st.subheader("Carregar Novos Dados")
 
     # Inicializa variáveis de controle no estado da sessão
@@ -280,6 +269,7 @@ with abas[0]:
 
 # --- 2. CONSULTAR ---
 with abas[1]:
+    st.session_state.aba_ativa_idx = 1
     if v_selecionada:
         st.info(f"Pesquisando na Versão: {v_selecionada}")
         c1, c2 = st.columns([1, 3])
@@ -359,6 +349,7 @@ with abas[2]:
         
 # --- 4. COMPARAR ---
 with abas[3]:
+      st.session_state.aba_ativa_idx = 3
     if len(lista_v) >= 2:
         # Seleciona as versões
         col1, col2 = st.columns(2)
