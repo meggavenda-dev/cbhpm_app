@@ -208,3 +208,21 @@ with abas[3]:
                     tooltip=['codigo', 'descricao', 'perc_var']
                 ).properties(height=350)
                 st.altair_chart(chart, use_container_width=True)
+
+# --- 5. EXPORTAR ---
+with abas[4]:
+    if st.button("Gerar Arquivo", key="btn_exportar_xlsx"):
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            with sqlite3.connect(DB_NAME) as con:
+                pd.read_sql("SELECT * FROM procedimentos", con).to_excel(writer, index=False)
+        st.download_button("Baixar Excel", output.getvalue(), "cbhpm.xlsx", key="dl_btn")
+
+# --- 6. GERENCIAR ---
+with abas[5]:
+    if lista_versoes:
+        v_del = st.selectbox("Versão para Deletar", lista_versoes, key="v_del_aba_gerenciar")
+        if st.button("Confirmar Exclusão", key="btn_deletar_versao"):
+            excluir_versao(v_del)
+            st.cache_data.clear()
+            st.rerun() # Aqui o rerun é aceitável pois a lista lateral PRECISA atualizar
