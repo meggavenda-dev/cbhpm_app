@@ -116,23 +116,30 @@ def criar_tabelas():
     con.commit()
     con.close()
 
-def arquivo_ja_importado(h):
+# =====================================================
+# EXCLUSÃO COM ROLLBACK
+# =====================================================
+def excluir_versao(versao):
     con = conn()
-    cur = con.cursor()
-    cur.execute("SELECT 1 FROM arquivos_importados WHERE hash=?", (h,))
-    ok = cur.fetchone() is not None
-    con.close()
-    return ok
+    try:
+        cur = con.cursor()
+        cur.execute("BEGIN")
 
-def registrar_arquivo(h, versao):
-    con = conn()
-    cur = con.cursor()
-    cur.execute("""
-        INSERT OR IGNORE INTO arquivos_importados
-        VALUES (NULL,?,?,?)
-    """, (h, versao, datetime.now().isoformat()))
-    con.commit()
-    con.close()
+        cur.execute("SELECT COUNT(*) FROM procedimentos WHERE versao=?", (versao,))
+        total = cur.fetchone()[0]
+
+        cur.execute("DELETE FROM procedimentos WHERE versao=?", (versao,))
+        cur.execute("DELETE FROM arquivos_importados WHERE versao=?", (versao,))
+
+        con.commit()
+        salvar_banco_github(f"Exclusão da versão {versao}")
+        return total
+
+    except Exception as e:
+        con.rollback()
+        raise e
+    finally:
+        con.close()
 
 # =====================================================
 # IMPORTAÇÃO
@@ -151,8 +158,6 @@ def importar(arquivos, versao):
 
     for arq in arquivos:
         h = gerar_hash_arquivo(arq)
-        if arquivo_ja_importado(h):
-            continue
 
         df = pd.read_excel(arq) if not arq.name.endswith(".csv") else pd.read_csv(arq, sep=";")
         df.columns = [c.strip() for c in df.columns]
@@ -174,7 +179,10 @@ def importar(arquivos, versao):
                 VALUES (NULL,?,?,?,?,?,?)
             """, tuple(r))
 
-        registrar_arquivo(h, versao)
+        cur.execute("""
+            INSERT OR IGNORE INTO arquivos_importados
+            VALUES (NULL,?,?,?)
+        """, (h, versao, datetime.now().isoformat()))
 
     con.commit()
     con.close()
@@ -227,89 +235,18 @@ abas = st.tabs([
     "📋 Consultar",
     "🧮 Calcular",
     "⚖️ Comparar versões",
-    "📤 Exportar"
+    "📤 Exportar",
+    "🗑️ Excluir versão"
 ])
 
-# ---------------- IMPORTAR ----------------
-with abas[0]:
-    versao = st.text_input("Versão CBHPM", key="import_versao")
-    arquivos = st.file_uploader("Arquivos", accept_multiple_files=True, key="import_files")
-    if st.button("Importar dados", key="btn_importar"):
-        importar(arquivos, versao)
-        st.success("Importação concluída")
+# ---------------- EXCLUIR ----------------
+with abas[5]:
+    v = st.selectbox("Versão CBHPM para exclusão", versoes())
+    confirmar = st.checkbox("Confirmo a exclusão definitiva desta versão")
 
-# ---------------- CONSULTAR ----------------
-with abas[1]:
-    v = st.selectbox("Tabela CBHPM", versoes(), key="consulta_tabela")
-    tipo = st.radio("Buscar por", ["Código", "Descrição"], key="consulta_tipo")
-    termo = st.text_input("Termo de busca", key="consulta_termo")
-
-    if st.button("Buscar", key="btn_buscar"):
-        df = buscar_codigo(termo, v) if tipo == "Código" else buscar_descricao(termo, v)
-        st.dataframe(df, use_container_width=True)
-
-# ---------------- CALCULAR ----------------
-with abas[2]:
-    v = st.selectbox("Tabela CBHPM", versoes(), key="calculo_tabela")
-    codigo = st.text_input("Código do procedimento", key="calculo_codigo")
-
-    col1, col2, col3 = st.columns(3)
-    valor_uco = col1.number_input("Valor da UCO", value=1.0, key="valor_uco")
-    valor_filme = col2.number_input("Valor do Filme", value=21.70, key="valor_filme")
-    inflator = col3.number_input("Inflator (%)", value=0.0, key="inflator")
-
-    if st.button("Calcular", key="btn_calcular"):
-        df = buscar_codigo(codigo, v)
-        if df.empty:
-            st.warning("Procedimento não encontrado")
+    if st.button("Excluir versão"):
+        if not confirmar:
+            st.warning("Confirme a exclusão")
         else:
-            p = df.iloc[0]
-            fator = 1 + inflator / 100
-
-            porte = p["porte"] * fator
-            uco = p["uco"] * valor_uco * fator
-            filme = p["filme"] * valor_filme * fator
-            total = porte + uco + filme
-
-            st.success(p["descricao"])
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Porte", f"R$ {porte:,.2f}")
-            c2.metric("UCO", f"R$ {uco:,.2f}")
-            c3.metric("Filme", f"R$ {filme:,.2f}")
-            c4.metric("💰 Total", f"R$ {total:,.2f}")
-
-# ---------------- COMPARAR ----------------
-with abas[3]:
-    v1 = st.selectbox("Versão A", versoes(), key="comparar_v1")
-    v2 = st.selectbox("Versão B", versoes(), key="comparar_v2")
-
-    df1 = buscar_codigo("", v1)
-    df2 = buscar_codigo("", v2).rename(
-        columns={"porte": "porte_B", "uco": "uco_B", "filme": "filme_B"}
-    )
-
-    comp = df1.merge(df2, on="codigo")
-    st.dataframe(comp, use_container_width=True)
-
-# ---------------- EXPORTAR ----------------
-with abas[4]:
-    tabelas = ["procedimentos", "arquivos_importados"]
-    escolha = st.multiselect("Tabelas", tabelas, key="export_tabelas")
-
-    con = conn()
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        if escolha:
-            for t in escolha:
-                pd.read_sql(f"SELECT * FROM {t}", con).to_excel(writer, sheet_name=t, index=False)
-        else:
-            for t in tabelas:
-                pd.read_sql(f"SELECT * FROM {t}", con).to_excel(writer, sheet_name=t, index=False)
-    con.close()
-
-    st.download_button(
-        "Baixar Excel",
-        data=output.getvalue(),
-        file_name="cbhpm_export.xlsx",
-        key="btn_exportar"
-    )
+            total = excluir_versao(v)
+            st.success(f"Versão {v} excluída. {total} registros removidos.")
