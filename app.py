@@ -7,6 +7,8 @@ import requests
 import base64
 import hashlib
 from io import BytesIO
+from contextlib import contextmanager
+import time
 
 # =====================================================
 # CONFIGURAÇÕES
@@ -15,11 +17,24 @@ DB_NAME = "data/cbhpm_database.db"
 os.makedirs("data", exist_ok=True)
 
 # =====================================================
-# CONEXÃO E UTILITÁRIOS
+# CONEXÃO E LIMPEZA (Context Manager)
 # =====================================================
-def conn():
-    return sqlite3.connect(DB_NAME, check_same_thread=False)
+@contextmanager
+def gerenciar_db():
+    """Gerencia a conexão com o banco garantindo fechamento e commit/rollback automático."""
+    con = sqlite3.connect(DB_NAME, check_same_thread=False, timeout=20)
+    try:
+        yield con
+        con.commit()
+    except Exception as e:
+        con.rollback()
+        raise e
+    finally:
+        con.close()
 
+# =====================================================
+# UTILITÁRIOS
+# =====================================================
 def to_float(v):
     try:
         if pd.isna(v): return 0.0
@@ -68,63 +83,50 @@ def salvar_banco_github(msg):
         st.warning("Erro na sincronização GitHub. Dados salvos apenas localmente.")
 
 # =====================================================
-# BANCO DE DADOS
+# OPERAÇÕES DE BANCO DE DADOS
 # =====================================================
 def criar_tabelas():
-    con = conn()
-    cur = con.cursor()
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS procedimentos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        codigo TEXT,
-        descricao TEXT,
-        porte REAL,
-        uco REAL,
-        filme REAL,
-        versao TEXT,
-        UNIQUE (codigo, versao)
-    )""")
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS arquivos_importados (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        hash TEXT UNIQUE,
-        versao TEXT,
-        data TEXT
-    )""")
-    con.commit()
-    con.close()
+    with gerenciar_db() as con:
+        cur = con.cursor()
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS procedimentos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT,
+            descricao TEXT,
+            porte REAL,
+            uco REAL,
+            filme REAL,
+            versao TEXT,
+            UNIQUE (codigo, versao)
+        )""")
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS arquivos_importados (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hash TEXT UNIQUE,
+            versao TEXT,
+            data TEXT
+        )""")
 
 def arquivo_ja_importado(h):
-    con = conn()
-    cur = con.cursor()
-    cur.execute("SELECT 1 FROM arquivos_importados WHERE hash=?", (h,))
-    ok = cur.fetchone() is not None
-    con.close()
-    return ok
+    with gerenciar_db() as con:
+        cur = con.cursor()
+        cur.execute("SELECT 1 FROM arquivos_importados WHERE hash=?", (h,))
+        return cur.fetchone() is not None
 
 def registrar_arquivo(h, versao):
-    con = conn()
-    cur = con.cursor()
-    cur.execute("INSERT OR IGNORE INTO arquivos_importados VALUES (NULL,?,?,?)", 
-                (h, versao, datetime.now().isoformat()))
-    con.commit()
-    con.close()
+    with gerenciar_db() as con:
+        cur = con.cursor()
+        cur.execute("INSERT OR IGNORE INTO arquivos_importados VALUES (NULL,?,?,?)", 
+                    (h, versao, datetime.now().isoformat()))
 
 def excluir_versao(versao):
-    con = conn()
-    try:
+    with gerenciar_db() as con:
         cur = con.cursor()
         cur.execute("DELETE FROM procedimentos WHERE versao=?", (versao,))
         total = cur.rowcount
         cur.execute("DELETE FROM arquivos_importados WHERE versao=?", (versao,))
-        con.commit()
         salvar_banco_github(f"Exclusão da versão {versao}")
         return total
-    except Exception as e:
-        con.rollback()
-        raise e
-    finally:
-        con.close()
 
 # =====================================================
 # IMPORTAÇÃO
@@ -134,27 +136,19 @@ def importar(arquivos, versao):
         st.error("Por favor, informe a Versão CBHPM.")
         return False
 
-    mapa = {
-        "codigo": ["Código", "Codigo"], 
-        "descricao": ["Descrição", "Descricao"], 
-        "porte": ["Porte"], 
-        "uco": ["UCO", "CH"], 
-        "filme": ["Filme"]
-    }
+    mapa = {"codigo": ["Código", "Codigo"], "descricao": ["Descrição", "Descricao"], 
+            "porte": ["Porte"], "uco": ["UCO", "CH"], "filme": ["Filme"]}
     
-    # Timeout aumentado para evitar 'database is locked'
-    con = sqlite3.connect(DB_NAME, check_same_thread=False, timeout=20)
-    cur = con.cursor()
     arquivos_processados = 0
 
-    try:
+    with gerenciar_db() as con:
+        cur = con.cursor()
         for arq in arquivos:
             h = gerar_hash_arquivo(arq)
             if arquivo_ja_importado(h):
-                st.warning(f"O conteúdo de '{arq.name}' já existe no sistema.")
+                st.warning(f"O conteúdo de '{arq.name}' já foi importado.")
                 continue
 
-            # Leitura do arquivo (CSV ou Excel)
             if arq.name.lower().endswith(".csv"):
                 try:
                     df = pd.read_csv(arq, sep=";", encoding="utf-8")
@@ -166,42 +160,27 @@ def importar(arquivos, versao):
             
             df.columns = [c.strip() for c in df.columns]
             
-            # Preparação dos dados
             dados_lista = []
             for _, row in df.iterrows():
-                # Busca a coluna correta baseada no mapa
                 d = {}
                 for campo, cols in mapa.items():
                     col_encontrada = next((c for c in cols if c in df.columns), None)
                     d[campo] = to_float(row[col_encontrada]) if col_encontrada else 0.0
                 
-                # Tupla para o executemany
                 dados_lista.append((
-                    str(row[next((c for c in mapa["codigo"] if c in df.columns))]), # codigo
-                    str(row[next((c for c in mapa["descricao"] if c in df.columns))]), # descricao
+                    str(row[next((c for c in mapa["codigo"] if c in df.columns))]),
+                    str(row[next((c for c in mapa["descricao"] if c in df.columns))]),
                     d["porte"], d["uco"], d["filme"], versao
                 ))
 
-            # Inserção em massa (MUITO mais rápido)
             cur.executemany("""
                 INSERT OR IGNORE INTO procedimentos (codigo, descricao, porte, uco, filme, versao)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, dados_lista)
             
-            # Registrar o hash do arquivo
             cur.execute("INSERT OR IGNORE INTO arquivos_importados (hash, versao, data) VALUES (?, ?, ?)", 
                         (h, versao, datetime.now().isoformat()))
-            
             arquivos_processados += 1
-
-        con.commit() # Salva tudo de uma vez
-        
-    except Exception as e:
-        con.rollback() # Se der erro em qualquer arquivo, desfaz tudo para não corromper
-        st.error(f"Erro durante a importação: {e}")
-        return False
-    finally:
-        con.close()
 
     if arquivos_processados > 0:
         salvar_banco_github(f"Importação {versao}")
@@ -209,18 +188,21 @@ def importar(arquivos, versao):
     return False
 
 # =====================================================
-# CONSULTAS
+# CONSULTAS (Com Cache para Performance)
 # =====================================================
+@st.cache_data
 def versoes():
-    try:
-        return pd.read_sql("SELECT DISTINCT versao FROM procedimentos ORDER BY versao", conn())["versao"].tolist()
-    except:
-        return []
+    with sqlite3.connect(DB_NAME) as con:
+        try:
+            return pd.read_sql("SELECT DISTINCT versao FROM procedimentos ORDER BY versao", con)["versao"].tolist()
+        except:
+            return []
 
 def buscar_dados(termo, versao, tipo):
     campo = "codigo" if tipo == "Código" else "descricao"
-    return pd.read_sql(f"SELECT codigo, descricao, porte, uco, filme FROM procedimentos WHERE {campo} LIKE ? AND versao = ?", 
-                       conn(), params=(f"%{termo}%", versao))
+    with sqlite3.connect(DB_NAME) as con:
+        return pd.read_sql(f"SELECT codigo, descricao, porte, uco, filme FROM procedimentos WHERE {campo} LIKE ? AND versao = ?", 
+                           con, params=(f"%{termo}%", versao))
 
 # =====================================================
 # INTERFACE STREAMLIT
@@ -244,29 +226,11 @@ with abas[0]:
         if importar(arqs, v_imp):
             st.success(f"Tabela '{v_imp}' importada com sucesso!")
             st.balloons()
-            # Pequena pausa para o usuário ver a mensagem antes do refresh
-            import time
+            st.cache_data.clear() # Limpa cache para atualizar selectboxes
             time.sleep(2)
             st.rerun()
 
-# 6. EXCLUIR (GERENCIAR)
-with abas[5]:
-    if lista_versoes:
-        v_excluir = st.selectbox("Versão para deletar", lista_versoes, key="v_del")
-        confirma = st.checkbox("Confirmar exclusão irreversível de todos os dados desta versão")
-        if st.button("Deletar Versão", key="btn_del"):
-            if confirma:
-                n = excluir_versao(v_excluir)
-                st.success(f"Versão '{v_excluir}' removida com sucesso! {n} registros foram apagados.")
-                import time
-                time.sleep(2)
-                st.rerun()
-            else:
-                st.warning("Você deve marcar a caixa de confirmação para prosseguir.")
-    else:
-        st.info("Nenhuma versão cadastrada para exclusão.")
-
-# --- As demais abas (Consultar, Calcular, Comparar, Exportar) permanecem com sua lógica original ---
+# 2. CONSULTAR
 with abas[1]:
     if v_selecionada:
         st.info(f"Pesquisando na: **{v_selecionada}**")
@@ -276,8 +240,9 @@ with abas[1]:
         if st.button("Buscar", key="btn_busca"):
             st.dataframe(buscar_dados(termo, v_selecionada, tipo), use_container_width=True)
     else:
-        st.warning("Nenhuma versão disponível. Importe dados primeiro.")
+        st.warning("Nenhuma versão disponível.")
 
+# 3. CALCULAR
 with abas[2]:
     if v_selecionada:
         cod_calc = st.text_input("Código do procedimento", key="cod_calc")
@@ -294,20 +259,61 @@ with abas[2]:
                 st.metric(f"Total - {p['descricao']}", f"R$ {tot:,.2f}")
             else: st.error("Código não encontrado.")
 
+# 4. COMPARAR (Dashboard de Métricas)
 with abas[3]:
     if len(lista_versoes) >= 2:
-        col_a, col_b = st.columns(2)
-        va = col_a.selectbox("Versão Base", lista_versoes, key="va")
-        vb = col_b.selectbox("Versão Comparação", lista_versoes, key="vb")
-        if st.button("Comparar", key="btn_comp"):
+        col_v1, col_v2 = st.columns(2)
+        va = col_v1.selectbox("Versão Base (Antiga)", lista_versoes, key="va")
+        vb = col_v2.selectbox("Versão Comparação (Nova)", lista_versoes, key="vb")
+        
+        if st.button("Analisar Diferenças", key="btn_comp"):
             dfa = buscar_dados("", va, "Código")
-            dfb = buscar_dados("", vb, "Código").rename(columns={"porte":"porte_B","uco":"uco_B","filme":"filme_B"})
-            st.dataframe(dfa.merge(dfb, on="codigo"), use_container_width=True)
-    else: st.info("Necessário ao menos 2 versões para comparar.")
+            dfb = buscar_dados("", vb, "Código").rename(
+                columns={"porte": "porte_B", "uco": "uco_B", "filme": "filme_B", "descricao": "desc_B"}
+            )
+            comp = dfa.merge(dfb, on="codigo")
+            
+            if not comp.empty:
+                comp['diff_porte'] = comp['porte_B'] - comp['porte']
+                comp['perc_var'] = (comp['diff_porte'] / comp['porte'].replace(0, 1)) * 100
+                
+                var_media = comp['perc_var'].mean()
+                subiram = len(comp[comp['diff_porte'] > 0])
+                
+                st.subheader(f"📊 Insights: {va} vs {vb}")
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Itens em Comum", len(comp))
+                m2.metric("Variação Média", f"{var_media:.2f}%", delta=f"{var_media:.2f}%")
+                m3.metric("Itens Reajustados", subiram)
+                
+                st.divider()
+                st.write("### Tabela Comparativa")
+                st.dataframe(comp[['codigo', 'descricao', 'porte', 'porte_B', 'perc_var']],
+                             column_config={"perc_var": st.column_config.NumberColumn("Variação %", format="%.2f%%")},
+                             use_container_width=True)
+            else:
+                st.warning("Sem códigos comuns para comparação.")
+    else: st.info("Necessário 2 versões.")
 
+# 5. EXPORTAR
 with abas[4]:
     if st.button("Gerar Excel Completo", key="btn_exp"):
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            pd.read_sql("SELECT * FROM procedimentos", conn()).to_excel(writer, sheet_name="Dados", index=False)
+            with sqlite3.connect(DB_NAME) as con:
+                pd.read_sql("SELECT * FROM procedimentos", con).to_excel(writer, sheet_name="Dados", index=False)
         st.download_button("Baixar Arquivo", output.getvalue(), "cbhpm_full.xlsx")
+
+# 6. GERENCIAR (EXCLUIR)
+with abas[5]:
+    if lista_versoes:
+        v_excluir = st.selectbox("Versão para deletar", lista_versoes, key="v_del")
+        confirma = st.checkbox("Confirmo a exclusão definitiva")
+        if st.button("Deletar Versão", key="btn_del"):
+            if confirma:
+                n = excluir_versao(v_excluir)
+                st.success(f"Versão '{v_excluir}' removida! {n} registros apagados.")
+                st.cache_data.clear()
+                time.sleep(2)
+                st.rerun()
+            else: st.warning("Confirme a exclusão.")
