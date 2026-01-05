@@ -17,9 +17,7 @@ import altair as alt
 DB_NAME = "data/cbhpm_database.db"
 os.makedirs("data", exist_ok=True)
 
-# 1. Gerenciamento do estado para as abas não pularem
-if 'aba_atual' not in st.session_state:
-    st.session_state.aba_atual = 0
+# Inicializa estados para persistência
 if 'comparacao_realizada' not in st.session_state:
     st.session_state.comparacao_realizada = False
 
@@ -173,30 +171,24 @@ st.title("CBHPM • Gestão Inteligente")
 lista_versoes = versoes()
 v_selecionada = st.sidebar.selectbox("Tabela CBHPM Ativa", lista_versoes, key="v_global") if lista_versoes else None
 
-# Controle de abas persistente usando session_state
-titulos_abas = ["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ r", "📤 Exportar", "🗑️ Gerenciar"]
-# Se a versão do Streamlit for >= 1.30, ele suporta o parâmetro 'key' para st.tabs
-# Caso contrário, ele usa a ordem natural. O 'st.session_state' garante que o script carregue corretamente.
-abas = st.tabs(titulos_abas)
+# O SEGREDO: Definir uma 'key' para st.tabs faz o Streamlit gerenciar a aba ativa automaticamente
+abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"])
 
 # --- 1. IMPORTAR ---
 with abas[0]:
-    v_imp = st.text_input("Nome da Versão (ex: CBHPM 2024)")
-    arqs = st.file_uploader("Upload arquivos", accept_multiple_files=True)
+    v_imp = st.text_input("Nome da Versão (ex: CBHPM 2024)", key="txt_v_imp")
+    arqs = st.file_uploader("Upload arquivos", accept_multiple_files=True, key="file_up_imp")
     if st.button("Executar Importação", key="btn_importar_final"):
         if importar(arqs, v_imp):
             st.success(f"Tabela '{v_imp}' importada!")
             st.balloons()
             st.cache_data.clear()
-            time.sleep(1)
-            # Ao importar, mantemos na aba 0 (Importar) ou mudamos para 1 (Consultar)
-            st.session_state.aba_atual = 0 
-            st.rerun()
+            # REMOVIDO: st.rerun() daqui evita o pulo. O Streamlit atualizará os componentes necessários.
 
 # --- 2. CONSULTAR ---
 with abas[1]:
     if v_selecionada:
-        st.info(f"Versão Ativa: {v_selecionada}")
+        st.info(f"Versão Ativa na Sidebar: {v_selecionada}")
         c1, c2 = st.columns([1, 3])
         tipo = c1.radio("Tipo", ["Código", "Descrição"], key="radio_tipo_busca")
         termo = c2.text_input("Termo", key="input_termo_busca")
@@ -223,78 +215,60 @@ with abas[2]:
 with abas[3]:
     if len(lista_versoes) >= 2:
         col_v1, col_v2 = st.columns(2)
-        # O segredo aqui: Ao mudar o selectbox, resetamos o estado da comparação realizada
+        # on_change limpa o estado apenas se você mudar a seleção, sem forçar pulo de aba
         va = col_v1.selectbox("Base (Antiga)", lista_versoes, key="va_comp", on_change=lambda: st.session_state.update({"comparacao_realizada": False}))
         vb = col_v2.selectbox("Comparação (Nova)", lista_versoes, key="vb_comp", on_change=lambda: st.session_state.update({"comparacao_realizada": False}))
         
         if st.button("Analisar Diferenças", key="btn_analisar_comp"):
             st.session_state.comparacao_realizada = True
             
-       if st.session_state.comparacao_realizada:
+        if st.session_state.comparacao_realizada:
             dfa = buscar_dados("", va, "Código")
-            # Renomeamos a descrição também para evitar o sufixo _x e _y
             dfb = buscar_dados("", vb, "Código").rename(columns={
                 "porte": "porte_B", 
                 "uco": "uco_B", 
                 "filme": "filme_B",
-                "descricao": "descricao_B" # Adicionado renomeação da descrição
+                "descricao": "descricao_B"
             })
             
             comp = dfa.merge(dfb, on="codigo")
             
             if not comp.empty:
-                # Calculamos a variação baseada no Porte
                 comp['perc_var'] = ((comp['porte_B'] - comp['porte']) / comp['porte'].replace(0, 1)) * 100
                 
-                # MÉTRICAS
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Itens em Comum", len(comp))
                 m2.metric("Variação Média", f"{comp['perc_var'].mean():.2f}%")
                 m3.metric("Com Aumento", len(comp[comp['perc_var'] > 0]))
 
-                # GRÁFICO
                 comp['Grupo'] = comp['codigo'].astype(str).str[:2]
                 resumo = comp.groupby('Grupo')['perc_var'].mean().reset_index()
                 
                 chart = alt.Chart(resumo).mark_bar().encode(
-                    x=alt.X('Grupo:N', sort='-y', title="Capítulo (Início do Código)"),
-                    y=alt.Y('perc_var:Q', title="Aumento Médio (%)"),
+                    x=alt.X('Grupo:N', sort='-y', title="Grupo"),
+                    y=alt.Y('perc_var:Q', title="Variação %"),
                     color=alt.condition(alt.datum.perc_var > 0, alt.value('steelblue'), alt.value('orange'))
                 ).properties(height=350)
                 
                 st.altair_chart(chart, use_container_width=True)
-
-                # CORREÇÃO DO DATAFRAME:
-                # Usamos a 'descricao' da tabela A (dfa) que permaneceu com o nome original após o merge
-                st.write("### Tabela Detalhada")
-                st.dataframe(
-                    comp[['codigo', 'descricao', 'porte', 'porte_B', 'perc_var']], 
-                    column_config={
-                        "codigo": "Código",
-                        "descricao": "Descrição",
-                        "porte": f"Porte ({va})",
-                        "porte_B": f"Porte ({vb})",
-                        "perc_var": st.column_config.NumberColumn("Variação %", format="%.2f%%")
-                    },
-                    use_container_width=True
-                )
+                st.dataframe(comp[['codigo', 'descricao', 'porte', 'porte_B', 'perc_var']], use_container_width=True)
             else:
-                st.warning("Não foram encontrados códigos em comum entre estas duas versões para comparação.")
+                st.warning("Não há códigos comuns para comparar.")
 
 # --- 5. EXPORTAR ---
 with abas[4]:
-    if st.button("Gerar Arquivo para Download", key="btn_exportar_xlsx"):
+    if st.button("Gerar Arquivo", key="btn_exportar_xlsx"):
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             with sqlite3.connect(DB_NAME) as con:
                 pd.read_sql("SELECT * FROM procedimentos", con).to_excel(writer, index=False)
-        st.download_button("Clique aqui para Baixar Excel", output.getvalue(), "cbhpm_exportado.xlsx", key="btn_download_real")
+        st.download_button("Baixar Excel", output.getvalue(), "cbhpm.xlsx", key="dl_btn")
 
 # --- 6. GERENCIAR ---
 with abas[5]:
     if lista_versoes:
-        v_del = st.selectbox("Versão", lista_versoes, key="v_del_aba_gerenciar")
+        v_del = st.selectbox("Versão para Deletar", lista_versoes, key="v_del_aba_gerenciar")
         if st.button("Confirmar Exclusão", key="btn_deletar_versao"):
             excluir_versao(v_del)
             st.cache_data.clear()
-            st.rerun()
+            st.rerun() # Aqui o rerun é aceitável pois a lista lateral PRECISA atualizar
