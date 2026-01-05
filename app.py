@@ -64,6 +64,7 @@ def salvar_banco_github(msg="Atualização automática do banco CBHPM"):
         st.error(f"Erro ao salvar no GitHub: {r2.status_code} - {r2.text}")
 
 baixar_banco()
+criar_tabelas()
 
 # =====================================================
 # BANCO
