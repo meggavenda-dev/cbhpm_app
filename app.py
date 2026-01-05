@@ -302,7 +302,6 @@ with abas[3]:
                     axis=1
                 )
 
-                )
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Itens em Comum", len(comp))
                 m2.metric("Variação Média", f"{comp['perc_var'].mean():.2f}%")
