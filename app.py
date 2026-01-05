@@ -263,8 +263,19 @@ with abas[0]:
             st.success(f"Tabela '{v_imp}' importada!")
             st.balloons()
             st.cache_data.clear()  # limpa qualquer cache residual
-            lista_versoes = versoes()  # atualiza imediatamente
-            st.experimental_rerun()   # força atualização do sidebar
+            
+            # Atualiza a lista de versões no estado da sessão
+            st.session_state.lista_versoes = versoes()
+
+# Sidebar usando session_state para sempre ter a lista atualizada
+if 'lista_versoes' not in st.session_state:
+    st.session_state.lista_versoes = versoes()
+
+v_selecionada = st.sidebar.selectbox(
+    "Tabela CBHPM Ativa", 
+    st.session_state.lista_versoes, 
+    key="v_global"
+) if st.session_state.lista_versoes else None
 
 # --- 2. CONSULTAR ---
 with abas[1]:
