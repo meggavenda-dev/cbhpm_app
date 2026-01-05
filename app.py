@@ -337,17 +337,13 @@ with abas[3]:
         v1 = col1.selectbox("Versão Anterior", lista_v, key="v1")
         v2 = col2.selectbox("Versão Atual", lista_v, key="v2")
         
-        # Botão para análise de reajustes
         if st.button("Analisar Reajustes"):
+            st.session_state.aba_ativa_idx = 3
             st.session_state.comparacao_realizada = True
-            st.session_state.aba_ativa_idx = 3  # mantém a aba Comparar ativa após clique
         
-        # Mostra resultados se a comparação já foi realizada
         if st.session_state.comparacao_realizada:
             df1 = buscar_dados("", v1, "Código")
-            df2 = buscar_dados("", v2, "Código").rename(
-                columns={"porte":"porte_2", "uco":"uco_2", "filme":"filme_2", "descricao":"desc_2"}
-            )
+            df2 = buscar_dados("", v2, "Código").rename(columns={"porte":"porte_2", "uco":"uco_2", "filme":"filme_2", "descricao":"desc_2"})
             comp = df1.merge(df2, on="codigo")
             
             if not comp.empty:
@@ -364,22 +360,14 @@ with abas[3]:
                 chart = alt.Chart(resumo).mark_bar().encode(
                     x=alt.X('codigo:N', title="Grupo (Capítulo)"),
                     y=alt.Y('var_porte:Q', title="Variação %"),
-                    color=alt.condition(
-                        alt.datum.var_porte > 0, 
-                        alt.value('steelblue'), 
-                        alt.value('orange')
-                    )
+                    color=alt.condition(alt.datum.var_porte > 0, alt.value('steelblue'), alt.value('orange'))
                 ).properties(height=350)
                 st.altair_chart(chart, use_container_width=True)
 
-                # Tabela detalhada
-                st.dataframe(
-                    comp[['codigo', 'descricao', 'porte', 'porte_2', 'var_porte']], 
-                    use_container_width=True, hide_index=True,
-                    column_config={"var_porte": st.column_config.NumberColumn("Variação %", format="%.2f%%")}
-                )
-    else:
-        st.warning("Necessário ao menos 2 versões para comparar.")
+                st.dataframe(comp[['codigo', 'descricao', 'porte', 'porte_2', 'var_porte']], 
+                             use_container_width=True, hide_index=True,
+                             column_config={"var_porte": st.column_config.NumberColumn("Variação %", format="%.2f%%")})
+    else: st.warning("Necessário ao menos 2 versões para comparar.")
 
 # --- 5. EXPORTAR ---
 with abas[4]:
