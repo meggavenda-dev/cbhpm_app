@@ -265,38 +265,67 @@ with abas[1]:
 # --- 3. CALCULAR ---
 with abas[2]:
     if v_selecionada:
-        st.subheader("Calculadora de Honorários CBHPM")
+        st.subheader("🧮 Calculadora de Honorários CBHPM")
         
-        cod_calc = st.text_input("Código do Procedimento", key="in_calc")
-        col1, col2, col3 = st.columns(3)
-        uco_v = col1.number_input("Valor UCO (R$)", 1.0, step=0.1)
-        filme_v = col2.number_input("Valor Filme (R$)", 21.70, step=0.1)
-        infla = col3.number_input("Ajuste Adicional (%)", 0.0)
+        # Estilização CSS para cartões de resultado
+        st.markdown("""
+            <style>
+            [data-testid="stMetricValue"] { font-size: 1.8rem; color: #007bff; }
+            .res-card { 
+                padding: 20px; 
+                border-radius: 10px; 
+                background-color: #f8f9fa; 
+                border-left: 5px solid #007bff;
+                margin-bottom: 20px;
+            }
+            </style>
+        """, unsafe_allow_html=True)
 
-        calcular_btn = st.button("Calcular Honorários")
+        with st.container(border=True):
+            col_cod, col_ajuste = st.columns([2, 1])
+            cod_calc = col_cod.text_input("Código do Procedimento", placeholder="Ex: 10101012", key="in_calc")
+            infla = col_ajuste.number_input("Ajuste Adicional (%)", 0.0, step=0.5, key="in_infla")
 
-        # Container separado para resultados
-        resultado_area = st.container()
+            c1, c2 = st.columns(2)
+            uco_v = c1.number_input("Valor UCO (R$)", 1.0, step=0.01, format="%.4f", key="in_uco_val")
+            filme_v = c2.number_input("Valor Filme (R$)", 21.70, step=0.01, format="%.2f", key="in_filme_val")
+
+            # O segredo para não pular de aba é não usar st.rerun() dentro do bloco de cálculo
+            calcular_btn = st.button("Calcular Agora", type="primary", use_container_width=True)
 
         if calcular_btn:
-            res = buscar_dados(cod_calc, v_selecionada, "Código")
-            if not res.empty:
-                p = res.iloc[0]
-                f = 1 + (infla/100)
-                
-                porte_calc = p['porte'] * f
-                uco_calc = p['uco'] * uco_v * f
-                filme_calc = p['filme'] * filme_v * f
-                total = porte_calc + uco_calc + filme_calc
-
-                # Exibir tudo em colunas na mesma linha
-                c_porte, c_uco, c_filme, c_total = resultado_area.columns(4)
-                c_porte.metric("Porte", f"R$ {porte_calc:,.2f}")
-                c_uco.metric("UCO", f"R$ {uco_calc:,.2f}")
-                c_filme.metric("Filme", f"R$ {filme_calc:,.2f}")
-                c_total.metric("Total", f"R$ {total:,.2f}", delta=f"{infla:.2f}%")
+            if not cod_calc:
+                st.warning("Por favor, insira um código.")
             else:
-                resultado_area.error("Código não encontrado.")
+                res = buscar_dados(cod_calc, v_selecionada, "Código")
+                if not res.empty:
+                    p = res.iloc[0]
+                    f = 1 + (infla/100)
+                    
+                    porte_calc = p['porte'] * f
+                    uco_calc = p['uco'] * uco_v * f
+                    filme_calc = p['filme'] * filme_v * f
+                    total = porte_calc + uco_calc + filme_calc
+
+                    # Apresentação Visual Melhorada
+                    st.markdown(f"""
+                        <div class="res-card">
+                            <small>Procedimento encontrado em <b>{v_selecionada}</b></small><br>
+                            <span style='font-size: 1.2rem;'>{p['descricao']}</span>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+                    c_porte, c_uco, c_filme, c_total = st.columns(4)
+                    c_porte.metric("Porte", f"R$ {porte_calc:,.2f}")
+                    c_uco.metric("UCO", f"R$ {uco_calc:,.2f}")
+                    c_filme.metric("Filme", f"R$ {filme_calc:,.2f}")
+                    # Destaca o total com delta positivo/negativo
+                    c_total.metric("TOTAL FINAL", f"R$ {total:,.2f}", delta=f"{infla:.2f}%" if infla != 0 else None)
+                    
+                    st.divider()
+                    st.caption(f"Cálculo baseado em: Porte base: {p['porte']} | UCO: {p['uco']} unidades | Filme: {p['filme']} m²")
+                else:
+                    st.error(f"O código '{cod_calc}' não foi encontrado na tabela {v_selecionada}.")
         
 # --- 4. COMPARAR ---
 with abas[3]:
