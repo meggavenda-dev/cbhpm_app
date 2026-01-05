@@ -4,3 +4,4 @@ openpyxl
 xlsxwriter
 fastapi
 uvicorn
+chardet
