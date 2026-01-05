@@ -7,7 +7,6 @@ import requests
 import base64
 import hashlib
 from io import BytesIO
-import chardet
 
 # =====================================================
 # CONFIGURAÇÕES
@@ -161,7 +160,7 @@ def excluir_versao(versao):
         con.close()
 
 # =====================================================
-# IMPORTAÇÃO (ROBUSTA COM FALLBACK E DETECÇÃO)
+# IMPORTAÇÃO
 # =====================================================
 def importar(arquivos, versao):
     mapa = {
@@ -180,25 +179,7 @@ def importar(arquivos, versao):
         if arquivo_ja_importado(h):
             continue
 
-        if arq.name.lower().endswith(".csv"):
-            try:
-                df = pd.read_csv(arq, sep=";", encoding="utf-8")
-                st.info(f"Arquivo {arq.name}: UTF-8 detectado")
-            except UnicodeDecodeError:
-                arq.seek(0)
-                try:
-                    df = pd.read_csv(arq, sep=";", encoding="latin1")
-                    st.warning(f"Arquivo {arq.name}: Latin-1 aplicado")
-                except UnicodeDecodeError:
-                    arq.seek(0)
-                    raw = arq.read()
-                    encoding = chardet.detect(raw)["encoding"]
-                    arq.seek(0)
-                    df = pd.read_csv(arq, sep=";", encoding=encoding)
-                    st.warning(f"Arquivo {arq.name}: encoding detectado automaticamente ({encoding})")
-        else:
-            df = pd.read_excel(arq)
-
+        df = pd.read_excel(arq) if not arq.name.endswith(".csv") else pd.read_csv(arq, sep=";")
         df.columns = [c.strip() for c in df.columns]
 
         dados = {}
@@ -254,3 +235,110 @@ def buscar_descricao(desc, versao):
         conn(),
         params=(f"%{desc}%", versao)
     )
+
+# =====================================================
+# INICIALIZAÇÃO
+# =====================================================
+baixar_banco()
+criar_tabelas()
+
+# =====================================================
+# INTERFACE
+# =====================================================
+st.title("CBHPM • Gestão Inteligente")
+
+abas = st.tabs([
+    "📥 Importar",
+    "📋 Consultar",
+    "🧮 Calcular",
+    "⚖️ Comparar versões",
+    "📤 Exportar",
+    "🗑️ Excluir versão"
+])
+
+# ---------------- IMPORTAR ----------------
+with abas[0]:
+    versao = st.text_input("Versão CBHPM")
+    arquivos = st.file_uploader("Arquivos", accept_multiple_files=True)
+    if st.button("Importar dados"):
+        importar(arquivos, versao)
+        st.success("Importação concluída")
+
+# ---------------- CONSULTAR ----------------
+with abas[1]:
+    v = st.selectbox("Tabela CBHPM", versoes())
+    tipo = st.radio("Buscar por", ["Código", "Descrição"])
+    termo = st.text_input("Termo de busca")
+    if st.button("Buscar"):
+        df = buscar_codigo(termo, v) if tipo == "Código" else buscar_descricao(termo, v)
+        st.dataframe(df, use_container_width=True)
+
+# ---------------- CALCULAR ----------------
+with abas[2]:
+    v = st.selectbox("Tabela CBHPM", versoes())
+    codigo = st.text_input("Código do procedimento")
+    col1, col2, col3 = st.columns(3)
+    valor_uco = col1.number_input("Valor da UCO", value=1.0)
+    valor_filme = col2.number_input("Valor do Filme", value=21.70)
+    inflator = col3.number_input("Inflator (%)", value=0.0)
+
+    if st.button("Calcular"):
+        df = buscar_codigo(codigo, v)
+        if df.empty:
+            st.warning("Procedimento não encontrado")
+        else:
+            p = df.iloc[0]
+            fator = 1 + inflator / 100
+            porte = p["porte"] * fator
+            uco = p["uco"] * valor_uco * fator
+            filme = p["filme"] * valor_filme * fator
+            total = porte + uco + filme
+
+            st.success(p["descricao"])
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Porte", f"R$ {porte:,.2f}")
+            c2.metric("UCO", f"R$ {uco:,.2f}")
+            c3.metric("Filme", f"R$ {filme:,.2f}")
+            c4.metric("💰 Total", f"R$ {total:,.2f}")
+
+# ---------------- COMPARAR ----------------
+with abas[3]:
+    v1 = st.selectbox("Versão A", versoes())
+    v2 = st.selectbox("Versão B", versoes())
+    df1 = buscar_codigo("", v1)
+    df2 = buscar_codigo("", v2).rename(
+        columns={"porte": "porte_B", "uco": "uco_B", "filme": "filme_B"}
+    )
+    st.dataframe(df1.merge(df2, on="codigo"), use_container_width=True)
+
+# ---------------- EXPORTAR ----------------
+with abas[4]:
+    tabelas = ["procedimentos", "arquivos_importados"]
+    escolha = st.multiselect("Tabelas", tabelas)
+    con = conn()
+    output = BytesIO()
+
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        for t in escolha if escolha else tabelas:
+            pd.read_sql(f"SELECT * FROM {t}", con).to_excel(
+                writer, sheet_name=t, index=False
+            )
+
+    con.close()
+    st.download_button(
+        "Baixar Excel",
+        data=output.getvalue(),
+        file_name="cbhpm_export.xlsx"
+    )
+
+# ---------------- EXCLUIR ----------------
+with abas[5]:
+    v = st.selectbox("Versão CBHPM para exclusão", versoes())
+    confirmar = st.checkbox("Confirmo a exclusão definitiva desta versão")
+
+    if st.button("Excluir versão"):
+        if not confirmar:
+            st.warning("Confirme a exclusão")
+        else:
+            total = excluir_versao(v)
+            st.success(f"Versão {v} excluída. {total} registros removidos.")
