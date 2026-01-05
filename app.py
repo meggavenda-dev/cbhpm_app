@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 from datetime import datetime
+from io import BytesIO
 
 DB_NAME = "cbhpm_database.db"
 
@@ -193,18 +194,29 @@ def simular_convenio(codigo, versao, convenio):
     return total
 
 # =====================================================
-# EXPORTAÇÃO
+# EXPORTAÇÃO POR VERSÃO
 # =====================================================
-def exportar_excel():
-    v = versoes()
-    arquivo = "CBHPM_Completa.xlsx"
-    with pd.ExcelWriter(arquivo, engine="xlsxwriter") as w:
-        for x in v:
-            pd.read_sql(
-                "SELECT codigo, descricao, porte, uco, filme FROM procedimentos WHERE versao=?",
-                conn(), params=(x,)
-            ).to_excel(w, sheet_name=x[:31], index=False)
-    return arquivo
+def exportar_excel_por_versao(versoes_selecionadas=None):
+    todas = versoes()
+
+    if not versoes_selecionadas:
+        versoes_selecionadas = todas
+
+    output = BytesIO()
+
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        for v in versoes_selecionadas:
+            df = pd.read_sql("""
+                SELECT codigo, descricao, porte, uco, filme
+                FROM procedimentos
+                WHERE versao=?
+            """, conn(), params=(v,))
+
+            if not df.empty:
+                df.to_excel(writer, sheet_name=v[:31], index=False)
+
+    output.seek(0)
+    return output
 
 # =====================================================
 # INTERFACE
@@ -275,7 +287,7 @@ if menu == "🔍 Comparar":
     if st.button("Comparar"):
         df1 = buscar_codigo("", v1)
         df2 = buscar_codigo("", v2).rename(
-            columns={"porte":"porte_2","uco":"uco_2","filme":"filme_2"}
+            columns={"porte": "porte_2", "uco": "uco_2", "filme": "filme_2"}
         )
         df = df1.merge(df2, on="codigo")
         df["Δ Porte"] = df["porte_2"] - df["porte"]
@@ -286,6 +298,19 @@ if menu == "🔍 Comparar":
 # EXPORTAR
 # =====================================================
 if menu == "📤 Exportar Excel":
+    st.subheader("📤 Exportar CBHPM")
+
+    selecionadas = st.multiselect(
+        "Selecione as versões CBHPM (se não selecionar nenhuma, todas serão exportadas):",
+        versoes()
+    )
+
     if st.button("Gerar Excel"):
-        arq = exportar_excel()
-        st.download_button("Download", open(arq,"rb"), file_name=arq)
+        arquivo = exportar_excel_por_versao(selecionadas)
+
+        st.download_button(
+            "⬇️ Baixar Excel",
+            data=arquivo,
+            file_name="CBHPM_exportacao.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
