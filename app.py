@@ -279,6 +279,7 @@ with abas[1]:
         termo = c2.text_input("Digite o código ou parte da descrição...", placeholder="Ex: 10101012 ou Consulta", key="search_term")
         
         # Botão de busca
+        st.session_state.aba_ativa_idx = 1
         if st.button("🔍 Realizar Busca", type="primary", use_container_width=True):
             if termo:
                 with st.spinner("Buscando no banco de dados..."):
