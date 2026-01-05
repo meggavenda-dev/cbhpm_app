@@ -150,4 +150,142 @@ def buscar_descricao(desc, versao):
         SELECT codigo, descricao, porte, uco, filme
         FROM procedimentos
         WHERE descricao LIKE ? AND versao = ?
-    """, conn(), params=(f"%{desc}%", vers
+    """, conn(), params=(f"%{desc}%", versao))
+
+# =====================================================
+# CÁLCULOS
+# =====================================================
+def calcular_manual(codigo, versao, inflator, valor_filme):
+    df = buscar_codigo(codigo, versao)
+    if df.empty:
+        return None
+
+    p = df.iloc[0]
+    fator = 1 + inflator / 100
+
+    porte = p["porte"] * fator
+    uco = p["uco"] * fator
+    filme = p["filme"] * valor_filme
+
+    total = porte + uco + filme
+    return p["descricao"], porte, uco, filme, total
+
+def simular_convenio(codigo, versao, convenio):
+    con = conn()
+    proc = pd.read_sql(
+        "SELECT porte, uco, filme FROM procedimentos WHERE codigo=? AND versao=?",
+        con, params=(codigo, versao)
+    )
+    conv = pd.read_sql(
+        "SELECT inflator, valor_filme FROM convenios WHERE nome=?",
+        con, params=(convenio,)
+    )
+    con.close()
+
+    if proc.empty or conv.empty:
+        return None
+
+    p = proc.iloc[0]
+    c = conv.iloc[0]
+    fator = 1 + c["inflator"] / 100
+
+    total = (p["porte"] + p["uco"]) * fator + p["filme"] * c["valor_filme"]
+    return total
+
+# =====================================================
+# EXPORTAÇÃO
+# =====================================================
+def exportar_excel():
+    v = versoes()
+    arquivo = "CBHPM_Completa.xlsx"
+    with pd.ExcelWriter(arquivo, engine="xlsxwriter") as w:
+        for x in v:
+            pd.read_sql(
+                "SELECT codigo, descricao, porte, uco, filme FROM procedimentos WHERE versao=?",
+                conn(), params=(x,)
+            ).to_excel(w, sheet_name=x[:31], index=False)
+    return arquivo
+
+# =====================================================
+# INTERFACE
+# =====================================================
+st.set_page_config("CBHPM Profissional", layout="wide")
+st.title("📊 Plataforma CBHPM")
+
+criar_tabelas()
+
+menu = st.sidebar.radio("Menu", [
+    "📥 Importar",
+    "📋 Consultar",
+    "🧮 Calcular",
+    "🔍 Comparar",
+    "📤 Exportar Excel"
+])
+
+# =====================================================
+# IMPORTAR
+# =====================================================
+if menu == "📥 Importar":
+    versao = st.text_input("Versão CBHPM")
+    arquivos = st.file_uploader("CSV ou XLSX", ["csv", "xlsx"], True)
+    if st.button("Importar"):
+        importar(arquivos, versao)
+        st.success("Importação concluída")
+
+# =====================================================
+# CONSULTAR
+# =====================================================
+if menu == "📋 Consultar":
+    v = st.selectbox("Versão", versoes())
+    tipo = st.radio("Buscar por", ["Código", "Descrição"])
+    termo = st.text_input("Termo")
+
+    if st.button("Buscar"):
+        df = buscar_codigo(termo, v) if tipo == "Código" else buscar_descricao(termo, v)
+        st.dataframe(df, use_container_width=True)
+
+# =====================================================
+# CALCULAR
+# =====================================================
+if menu == "🧮 Calcular":
+    v = st.selectbox("Versão", versoes())
+    codigo = st.text_input("Código do procedimento")
+    inflator = st.number_input("Inflator (%)", 0.0, 500.0, 0.0)
+    valor_filme = st.number_input("Valor do filme", 0.0, 1000.0, 21.70)
+
+    if st.button("Calcular"):
+        r = calcular_manual(codigo, v, inflator, valor_filme)
+        if not r:
+            st.warning("Procedimento não encontrado")
+        else:
+            desc, porte, uco, filme, total = r
+            st.info(desc)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Porte", f"R$ {porte:,.2f}")
+            c2.metric("UCO", f"R$ {uco:,.2f}")
+            c3.metric("Filme", f"R$ {filme:,.2f}")
+            st.success(f"💰 Total: R$ {total:,.2f}")
+
+# =====================================================
+# COMPARAR
+# =====================================================
+if menu == "🔍 Comparar":
+    v1 = st.selectbox("Versão base", versoes())
+    v2 = st.selectbox("Versão comparada", versoes())
+    if st.button("Comparar"):
+        df1 = buscar_codigo("", v1)
+        df2 = buscar_codigo("", v2).rename(
+            columns={"porte":"porte_2","uco":"uco_2","filme":"filme_2"}
+        )
+        df = df1.merge(df2, on="codigo")
+        df["Δ Porte"] = df["porte_2"] - df["porte"]
+        df["Δ UCO"] = df["uco_2"] - df["uco"]
+        st.dataframe(df, use_container_width=True)
+
+# =====================================================
+# EXPORTAR
+# =====================================================
+if menu == "📤 Exportar Excel":
+    if st.button("Gerar Excel"):
+        arq = exportar_excel()
+        st.download_button("Download", open(arq,"rb"), file_name=arq)
