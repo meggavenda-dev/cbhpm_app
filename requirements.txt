@@ -1,4 +1,6 @@
 streamlit
 pandas
-sqlalchemy
-psycopg2-binary
+openpyxl
+xlsxwriter
+fastapi
+uvicorn
