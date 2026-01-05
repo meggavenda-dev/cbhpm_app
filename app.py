@@ -194,54 +194,52 @@ abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comp
 
 # --- 1. IMPORTAR ---
 # --- 1. IMPORTAR (VERSÃO FINAL - VISUAL LIMPO) ---
+# --- 1. IMPORTAR (VERSÃO CORRIGIDA - SEM TELA BRANCA) ---
 with abas[0]:
     st.subheader("Carregar Novos Dados")
 
-    # Criamos um espaço vazio que conterá o formulário ou as mensagens de sucesso
+    # Criamos o container que será alternado
     area_importacao = st.empty()
 
-    # Se a importação ainda não começou ou não foi processada neste ciclo
-    with area_importacao.container():
-        with st.form("form_importacao", clear_on_submit=True):
-            v_imp = st.text_input("Nome da Versão (ex: CBHPM 2024)")
-            arqs = st.file_uploader("Upload arquivos (CSV ou Excel)", accept_multiple_files=True)
-            submitted = st.form_submit_button("🚀 Iniciar Importação Agora")
-            
-            if submitted:
-                if not v_imp:
-                    st.error("Por favor, dê um nome para esta versão antes de importar.")
-                elif not arqs:
-                    st.warning("Nenhum arquivo selecionado.")
-                else:
-                    # O "Pulo do Gato": Limpamos o formulário da tela IMEDIATAMENTE
-                    area_importacao.empty()
-                    
-                    # Agora trabalhamos em um container limpo
-                    with st.container():
-                        st.info(f"🔄 Iniciando processamento da versão: **{v_imp}**")
-                        
-                        # A barra de progresso (dentro da função importar) aparecerá aqui
-                        if importar(arqs, v_imp):
-                            # Notificação toast rápida
-                            st.toast(f"Tabela {v_imp} processada!", icon="✅")
-                            
-                            # Mensagem final de sucesso
-                            st.success("✅ Importação concluída com sucesso! Atualizando sistema...")
-                            
-                            # Atualização de estados
-                            st.cache_data.clear()
-                            st.session_state.lista_versoes = versoes()
-                            
-                            # Aguarda para leitura
-                            time.sleep(2)
-                            
-                            # Reinicia o app - ele voltará com a sidebar atualizada e o form vazio
-                            st.rerun()
-                        else:
-                            st.error("Erro durante a importação. Verifique os arquivos.")
-                            # Botão para voltar ao form se houver erro
-                            if st.button("Voltar"):
-                                st.rerun()
+    # Usamos uma variável de controle no session_state para saber se estamos importando
+    if "processando" not in st.session_state:
+        st.session_state.processando = False
+
+    if not st.session_state.processando:
+        # CONTEÚDO 1: O FORMULÁRIO
+        with area_importacao.container():
+            with st.form("form_importacao", clear_on_submit=True):
+                v_imp = st.text_input("Nome da Versão (ex: CBHPM 2024)")
+                arqs = st.file_uploader("Upload arquivos (CSV ou Excel)", accept_multiple_files=True)
+                submitted = st.form_submit_button("🚀 Iniciar Importação Agora")
+                
+                if submitted:
+                    if not v_imp or not arqs:
+                        st.error("Preencha o nome da versão e selecione ao menos um arquivo.")
+                    else:
+                        st.session_state.processando = True
+                        st.rerun() # Reinicia para trocar a tela imediatamente
+    else:
+        # CONTEÚDO 2: O STATUS DE PROCESSAMENTO (Substitui o formulário)
+        with area_importacao.container():
+            st.info("### ⚙️ Processando Informações")
+            # A barra de progresso e as mensagens de status aparecem aqui
+            if importar(arqs, v_imp):
+                st.toast(f"Tabela {v_imp} processada!", icon="✅")
+                st.success("✅ Importação concluída com sucesso! Atualizando sistema...")
+                
+                # Resetamos o estado e atualizamos dados
+                st.cache_data.clear()
+                st.session_state.lista_versoes = versoes()
+                st.session_state.processando = False
+                
+                time.sleep(2)
+                st.rerun()
+            else:
+                st.error("Erro na importação.")
+                if st.button("Tentar Novamente"):
+                    st.session_state.processando = False
+                    st.rerun()
 
 # --- 2. CONSULTAR ---
 with abas[1]:
