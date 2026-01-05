@@ -1,3 +1,4 @@
+# CBHPM Gestão Inteligente - App Streamlit com melhorias profissionais
 import os
 import base64
 import hashlib
@@ -7,6 +8,7 @@ from io import BytesIO
 from contextlib import contextmanager
 from datetime import datetime
 import csv
+import random
 
 import pandas as pd
 import requests
@@ -14,18 +16,21 @@ import altair as alt
 import streamlit as st
 
 # =====================================================
-# CONFIGURAÇÕES E ESTADO DA SESSÃO
+# CONFIGURAÇÕES & TEMA
 # =====================================================
 DB_NAME = "data/cbhpm_database.db"
 os.makedirs("data", exist_ok=True)
+
+# Configuração de página (preferível logo no início)
+st.set_page_config(page_title="CBHPM Gestão Inteligente", layout="wide")
+st.title("⚖️ CBHPM • Auditoria e Gestão")
 
 DEBUG = bool(st.secrets.get("DEBUG", False))
 UCO_DEFAULT = float(st.secrets.get("UCO_VALOR", 1.00))
 
 # Estados iniciais
-if 'comparacao_realizada' not in st.session_state:
+if "comparacao_realizada" not in st.session_state:
     st.session_state.comparacao_realizada = False
-
 # Aba preferida (controla índice do radio). Começa em "📋 Consultar".
 if "aba_pref" not in st.session_state:
     st.session_state.aba_pref = "📋 Consultar"
@@ -33,25 +38,30 @@ if "aba_pref" not in st.session_state:
 # =====================================================
 # AJUDANTES
 # =====================================================
-def warn_user(msg, exc=None):
+def warn_user(msg: str, exc: Exception | None = None) -> None:
     """Mostra warning; se DEBUG=True, exibe exceção detalhada."""
     if DEBUG and exc is not None:
         st.exception(exc)
     else:
         st.warning(msg)
 
-def sanitize_str(x):
+def sanitize_str(x) -> str:
     return str(x).strip()
+
+def moeda_br(v: float) -> str:
+    """Formata valor monetário no padrão pt-BR."""
+    s = f"{v:,.2f}"
+    return "R$ " + s.replace(",", "X").replace(".", ",").replace("X", ".")
 
 # =====================================================
 # CONEXÃO E BANCO DE DADOS
 # =====================================================
 @st.cache_resource
-def get_connection():
-    # check_same_thread=False é essencial para Streamlit (multithread)
-    con = sqlite3.connect(DB_NAME, check_same_thread=False, timeout=30)
+def get_connection() -> sqlite3.Connection:
+    """Conexão SQLite com PRAGMAs para desempenho e integridade."""
+    con = sqlite3.connect(DB_NAME, check_same_thread=False, timeout=60)
+    con.row_factory = sqlite3.Row
     cur = con.cursor()
-    # PRAGMAs: melhor desempenho e integridade
     cur.executescript("""
         PRAGMA journal_mode=WAL;
         PRAGMA synchronous=NORMAL;
@@ -69,7 +79,8 @@ def gerenciar_db():
         con.rollback()
         raise e
 
-def criar_tabelas():
+def criar_tabelas() -> None:
+    """Cria tabelas e índices básicos."""
     with gerenciar_db() as con:
         cur = con.cursor()
         cur.execute("""
@@ -99,7 +110,7 @@ def criar_tabelas():
 # =====================================================
 # UTILITÁRIOS
 # =====================================================
-def to_float(v):
+def to_float(v) -> float:
     if pd.isna(v) or v == "":
         return 0.0
     if isinstance(v, str):
@@ -109,43 +120,58 @@ def to_float(v):
     except:
         return 0.0
 
-def gerar_hash_arquivo(uploaded_file):
+def gerar_hash_arquivo(uploaded_file) -> str:
     uploaded_file.seek(0)
     h = hashlib.sha256(uploaded_file.read()).hexdigest()
     uploaded_file.seek(0)
     return h
 
-def extrair_valor(row, df, col_opts):
+def extrair_valor(row, df: pd.DataFrame, col_opts: list[str]) -> float:
     for c in col_opts:
         if c in df.columns:
             return to_float(row[c])
     return 0.0
 
-def read_csv_smart(file):
-    """Detecta delimitador e encoding de forma simples para CSV."""
+def read_csv_smart(file) -> pd.DataFrame:
+    """Detecta BOM, encoding e delimitador de forma robusta para CSV."""
     file.seek(0)
-    sample_bytes = file.read(2048)
-    # tentar utf-8, senão latin-1
-    try:
-        sample_str = sample_bytes.decode("utf-8")
-        enc = "utf-8"
-    except UnicodeDecodeError:
-        sample_str = sample_bytes.decode("latin-1", errors="ignore")
-        enc = "latin-1"
-    # detectar delimitador
-    try:
-        dialect = csv.Sniffer().sniff(sample_str, delimiters=[",", ";", "\t", "|"])
-        sep = dialect.delimiter
-    except Exception:
-        sep = ";"
-    file.seek(0)
-    return pd.read_csv(file, sep=sep, encoding=enc)
+    content = file.read()
+    # Remove BOM, se existir
+    if content.startswith(b"\xef\xbb\xbf"):
+        content = content[3:]
+    # Tenta encodings comuns
+    for enc in ("utf-8", "latin-1"):
+        try:
+            sample_str = content[:2048].decode(enc)
+            sep = csv.Sniffer().sniff(sample_str, delimiters=[",", ";", "\t", "|"]).delimiter
+            return pd.read_csv(BytesIO(content), sep=sep, encoding=enc)
+        except Exception:
+            continue
+    # Fallback
+    return pd.read_csv(BytesIO(content), sep=";", encoding="latin-1")
 
 # =====================================================
-# GITHUB – PERSISTÊNCIA
+# GITHUB – PERSISTÊNCIA (com timeout/backoff)
 # =====================================================
-def baixar_banco():
-    # Se já existe local, não baixa
+def _request_with_retry(method: str, url: str, headers=None, json=None, params=None, retries: int = 3, timeout: int = 20):
+    """Requests com retry/backoff para maior robustez."""
+    for i in range(retries + 1):
+        try:
+            r = requests.request(method, url, headers=headers, json=json, params=params, timeout=timeout)
+            if r.status_code in (200, 201):
+                return r
+            if r.status_code in (429, 500, 502, 503, 504):  # backoff em códigos transitórios
+                time.sleep((2 ** i) + random.uniform(0, 0.4))
+                continue
+            return r  # outros códigos: retorna para tratamento
+        except requests.RequestException as e:
+            if i == retries:
+                raise e
+            time.sleep((2 ** i) + 0.2)
+    return None
+
+def baixar_banco() -> None:
+    """Baixa o arquivo de banco do GitHub, se não existir localmente."""
     if os.path.exists(DB_NAME):
         return
     try:
@@ -153,17 +179,14 @@ def baixar_banco():
         token = st.secrets.get('GITHUB_TOKEN')
         branch = st.secrets.get('GITHUB_BRANCH', 'main')
         if not repo or not token:
-            # Cria um DB vazio caso não tenha secrets
+            # Sem secrets: cria DB vazio
             open(DB_NAME, "wb").close()
             return
 
         url = f"https://api.github.com/repos/{repo}/contents/{DB_NAME}"
-        headers = {
-            "Authorization": f"token {token}",
-            "Accept": "application/vnd.github.v3+json"
-        }
-        r = requests.get(url, headers=headers, params={"ref": branch})
-        if r.status_code == 200:
+        headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+        r = _request_with_retry("GET", url, headers=headers, params={"ref": branch}, timeout=10)
+        if r and r.status_code == 200:
             content = r.json().get("content")
             if content:
                 with open(DB_NAME, "wb") as f:
@@ -176,8 +199,8 @@ def baixar_banco():
         warn_user("Falha ao baixar banco do GitHub. Criando DB local vazio.", e)
         open(DB_NAME, "wb").close()
 
-def salvar_banco_github(msg, retry=1):
-    """Envia o arquivo SQLite para o repositório. Faz retry simples em caso de sha defasado."""
+def salvar_banco_github(msg: str) -> None:
+    """Sincroniza o arquivo SQLite para o repositório com retry/backoff."""
     try:
         repo = st.secrets.get('GITHUB_REPO')
         token = st.secrets.get('GITHUB_TOKEN')
@@ -195,39 +218,26 @@ def salvar_banco_github(msg, retry=1):
             content = base64.b64encode(f.read()).decode()
 
         api_url = f"https://api.github.com/repos/{repo}/contents/{DB_NAME}"
-        headers = {
-            "Authorization": f"token {token}",
-            "Accept": "application/vnd.github.v3+json"
-        }
+        headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
 
-        # Obtém sha atual (se existir)
-        r = requests.get(api_url, headers=headers, params={"ref": branch})
-        sha = r.json().get("sha") if r.status_code == 200 else None
+        # GET para obter sha
+        r = _request_with_retry("GET", api_url, headers=headers, params={"ref": branch}, timeout=10)
+        sha = r.json().get("sha") if r and r.status_code == 200 else None
         payload = {"message": msg, "content": content, "branch": branch}
         if sha:
             payload["sha"] = sha
 
-        put_r = requests.put(api_url, headers=headers, json=payload)
-        if put_r.status_code in (200, 201):
-            return
-        # Retry simples: refaz GET e PUT uma vez
-        if retry > 0:
-            time.sleep(0.8)
-            r2 = requests.get(api_url, headers=headers, params={"ref": branch})
-            sha2 = r2.json().get("sha") if r2.status_code == 200 else None
-            if sha2:
-                payload["sha"] = sha2
-            put_r2 = requests.put(api_url, headers=headers, json=payload)
-            if put_r2.status_code in (200, 201):
-                return
-        warn_user(f"Erro na sincronização com GitHub (status {put_r.status_code}).")
+        put_r = _request_with_retry("PUT", api_url, headers=headers, json=payload, timeout=20)
+        if not put_r or put_r.status_code not in (200, 201):
+            warn_user(f"Erro na sincronização com GitHub (status {put_r.status_code if put_r else 'N/A'}).")
     except Exception as e:
         warn_user("Erro na sincronização com GitHub.", e)
 
 # =====================================================
 # LÓGICA DE NEGÓCIO
 # =====================================================
-def importar(arquivos, versao):
+def importar(arquivos: list, versao: str) -> bool:
+    """Importa arquivos CSV/Excel para a base, com UPSERT e validações."""
     if not versao:
         st.error("Informe a Versão CBHPM.")
         return False
@@ -256,17 +266,20 @@ def importar(arquivos, versao):
                     prog.progress(min(idx / total_arqs, 1.0), text=f"Arquivo {idx}/{total_arqs} (já importado)")
                     continue
 
-                # Ler CSV/Excel de forma robusta
+                # Leitura robusta (CSV/Excel)
                 try:
                     if arq.name.lower().endswith(".csv"):
                         df = read_csv_smart(arq)
-                    else:
-                        df = pd.read_excel(arq)
+                    elif arq.name.lower().endswith(".xls"):
+                        df = pd.read_excel(arq, engine="xlrd")
+                    else:  # .xlsx
+                        df = pd.read_excel(arq, engine="openpyxl")
                 except Exception as e:
                     st.error(f"Erro ao ler {arq.name}: {e}")
                     prog.progress(min(idx / total_arqs, 1.0), text=f"Arquivo {idx}/{total_arqs} (erro de leitura)")
                     continue
 
+                # Normaliza cabeçalhos
                 df.columns = [c.strip() for c in df.columns]
 
                 # Valida presença de colunas de código e descrição
@@ -277,31 +290,38 @@ def importar(arquivos, versao):
                     prog.progress(min(idx / total_arqs, 1.0), text=f"Arquivo {idx}/{total_arqs} (colunas inválidas)")
                     continue
 
+                # Lista de registros
                 dados_lista = []
+                pulados = 0
                 for _, row in df.iterrows():
                     d = {campo: extrair_valor(row, df, cols) for campo, cols in mapa.items()}
                     cod = sanitize_str(row[cod_col])
                     desc = sanitize_str(row[desc_col])
                     if not cod or not desc:
-                        continue  # pula linhas inválidas
+                        pulados += 1
+                        continue
                     dados_lista.append((cod, desc, d["porte"], d["uco"], d["filme"], versao))
 
-                # Inserts em chunks para grandes volumes
-                SQL_INSERT = """
-                    INSERT OR IGNORE INTO procedimentos
-                    (codigo, descricao, porte, uco, filme, versao)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                # UPSERT em chunks
+                SQL_UPSERT = """
+                INSERT INTO procedimentos (codigo, descricao, porte, uco, filme, versao)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(codigo, versao) DO UPDATE SET
+                  descricao=excluded.descricao,
+                  porte=excluded.porte,
+                  uco=excluded.uco,
+                  filme=excluded.filme
                 """
                 CHUNK = 5000
                 for i in range(0, len(dados_lista), CHUNK):
-                    cur.executemany(SQL_INSERT, dados_lista[i:i+CHUNK])
+                    cur.executemany(SQL_UPSERT, dados_lista[i:i+CHUNK])
 
-                cur.execute("""
-                    INSERT OR IGNORE INTO arquivos_importados (hash, versao, data)
-                    VALUES (?, ?, ?)
-                """, (h, versao, datetime.now().isoformat()))
+                cur.execute("INSERT OR IGNORE INTO arquivos_importados (hash, versao, data) VALUES (?, ?, ?)",
+                            (h, versao, datetime.now().isoformat()))
                 arquivos_processados += 1
-                prog.progress(min(idx / total_arqs, 1.0), text=f"Arquivo {idx}/{total_arqs} importado")
+
+                prog.progress(min(idx / total_arqs, 1.0),
+                              text=f"Arquivo {idx}/{total_arqs} importado (linhas válidas: {len(dados_lista)}; puladas: {pulados})")
             except Exception as e:
                 warn_user(f"Falha ao importar '{getattr(arq, 'name', 'arquivo')}'.", e)
                 prog.progress(min(idx / total_arqs, 1.0), text=f"Arquivo {idx}/{total_arqs} (falha)")
@@ -312,14 +332,14 @@ def importar(arquivos, versao):
     return False
 
 @st.cache_data(ttl=300)
-def versoes():
+def versoes() -> list[str]:
     with get_connection() as con:
         try:
             return pd.read_sql("SELECT DISTINCT versao FROM procedimentos ORDER BY versao", con)["versao"].tolist()
         except Exception:
             return []
 
-def buscar_dados(termo, versao, tipo):
+def buscar_dados(termo: str, versao: str, tipo: str) -> pd.DataFrame:
     campo = "codigo" if tipo == "Código" else "descricao"
     with get_connection() as con:
         return pd.read_sql(
@@ -332,7 +352,7 @@ def buscar_dados(termo, versao, tipo):
             con, params=(f"%{termo}%", versao)
         )
 
-def show_dataframe_paginated(df, page_size=200):
+def show_dataframe_paginated(df: pd.DataFrame, page_size: int = 200) -> None:
     total = len(df)
     if total == 0:
         st.info("Nenhum registro para exibir.")
@@ -352,9 +372,6 @@ def show_dataframe_paginated(df, page_size=200):
 # =====================================================
 baixar_banco()
 criar_tabelas()
-
-st.set_page_config(page_title="CBHPM Gestão Inteligente", layout="wide")
-st.title("⚖️ CBHPM • Auditoria e Gestão")
 
 # =====================================================
 # TEMA GLOBAL (CSS)
@@ -426,7 +443,7 @@ if aba_atual == "📥 Importar":
     st.subheader("📥 Carregar Novos Dados")
     st.caption("Faça upload de arquivos CSV/Excel com procedimentos CBHPM.")
 
-    # Variáveis de controle no estado da sessão
+    # Variáveis de controle
     if "processando" not in st.session_state:
         st.session_state.processando = False
     if "temp_v_imp" not in st.session_state:
@@ -434,11 +451,9 @@ if aba_atual == "📥 Importar":
     if "temp_arqs" not in st.session_state:
         st.session_state.temp_arqs = None
 
-    # Espaço dinâmico (Placeholder)
     area_dinamica = st.empty()
 
     if not st.session_state.processando:
-        # EXIBE O FORMULÁRIO
         with area_dinamica.container():
             st.markdown('<div class="card">', unsafe_allow_html=True)
             with st.form("form_importacao", clear_on_submit=True):
@@ -453,9 +468,8 @@ if aba_atual == "📥 Importar":
                     st.session_state.temp_v_imp = v_imp_input
                     st.session_state.temp_arqs = arqs_input
                     st.session_state.processando = True
-                    st.rerun()  # Reinicia para trocar a tela
+                    st.rerun()
     else:
-        # EXIBE O STATUS DE PROCESSAMENTO (O formulário sumiu)
         with area_dinamica.container():
             st.info(f"⚙️ Processando: **{st.session_state.temp_v_imp}**")
             if importar(st.session_state.temp_arqs, st.session_state.temp_v_imp):
@@ -475,7 +489,7 @@ if aba_atual == "📥 Importar":
                     st.rerun()
 
 # =====================================================
-# 2) CONSULTAR  (COM BOTÃO DE PESQUISA + PAGINAÇÃO)
+# 2) CONSULTAR  (Botão de pesquisa + Paginação + Download)
 # =====================================================
 if aba_atual == "📋 Consultar":
     lista_v = versoes()
@@ -510,7 +524,7 @@ if aba_atual == "📋 Consultar":
         st.warning("Nenhuma versão disponível. Importe dados na aba '📥 Importar'.")
 
 # =====================================================
-# 3) CALCULAR  (UCO automático; mantém métrica UCO; checkboxes reativos + design)
+# 3) CALCULAR  (Reativo; checkboxes; métrica UCO; faixa TOTAL)
 # =====================================================
 if aba_atual == "🧮 Calcular":
     lista_v = versoes()
@@ -522,7 +536,7 @@ if aba_atual == "🧮 Calcular":
 
         UCO_VALOR_APLICADO = float(st.secrets.get("UCO_VALOR", UCO_DEFAULT))
 
-        # Grupo de entradas em card
+        # Inputs (sem formulário; reativos)
         st.markdown('<div class="card">', unsafe_allow_html=True)
         col_cod, col_ajuste, col_filme = st.columns([2, 1, 1.2])
         cod_calc = col_cod.text_input("Código do Procedimento", placeholder="Ex: 10101012",
@@ -568,16 +582,16 @@ if aba_atual == "🧮 Calcular":
 
                 # Métricas
                 c_porte, c_uco_box, c_filme = st.columns(3)
-                c_porte.metric("Porte", f"R$ {porte_calc:,.2f}")
-                c_uco_box.metric("UCO", f"R$ {uco_calc:,.2f}")
-                c_filme.metric("Filme", f"R$ {filme_calc:,.2f}")
+                c_porte.metric("Porte", moeda_br(porte_calc))
+                c_uco_box.metric("UCO", moeda_br(uco_calc))
+                c_filme.metric("Filme", moeda_br(filme_calc))
 
                 # Faixa TOTAL
                 houve_ajuste = (infla != 0) and (aplicar_porte or aplicar_uco or aplicar_filme)
                 st.markdown(f"""
                     <div class="total-strip" style="border-left:6px solid var(--success); margin-top: 4px;">
                         <div class="label">TOTAL FINAL</div>
-                        <div class="value">R$ {total:,.2f}</div>
+                        <div class="value">{moeda_br(total)}</div>
                     </div>
                 """, unsafe_allow_html=True)
 
@@ -608,19 +622,20 @@ if aba_atual == "⚖️ Comparar":
         col1, col2 = st.columns(2)
         v1 = col1.selectbox("Versão Anterior", lista_v, key="v1")
         v2 = col2.selectbox("Versão Atual", lista_v, key="v2")
-        
+
         if st.button("Analisar Reajustes"):
             st.session_state.comparacao_realizada = True
-        
+
         if st.session_state.comparacao_realizada:
             df1 = buscar_dados("", v1, "Código")
             df2 = buscar_dados("", v2, "Código").rename(
-                columns={"porte":"porte_2", "uco":"uco_2", "filme":"filme_2", "descricao":"desc_2"}
+                columns={"porte": "porte_2", "uco": "uco_2", "filme": "filme_2", "descricao": "desc_2"}
             )
             comp = df1.merge(df2, on="codigo")
-            
+
             if not comp.empty:
                 base = comp['porte']
+                # var % com NaN quando porte=0
                 comp['var_porte'] = ((comp['porte_2'] - base) / base.replace(0, pd.NA)) * 100
 
                 m1, m2, m3, m4 = st.columns(4)
@@ -634,12 +649,15 @@ if aba_atual == "⚖️ Comparar":
                     x=alt.X('codigo:N', title="Grupo (Capítulo)"),
                     y=alt.Y('var_porte:Q', title="Variação % (média)"),
                     color=alt.condition(alt.datum.var_porte > 0, alt.value('#1E88E5'), alt.value('#F59E0B')),
-                    tooltip=[alt.Tooltip('codigo:N', title='Grupo'), alt.Tooltip('var_porte:Q', title='Variação média', format='.2f')]
+                    tooltip=[
+                        alt.Tooltip('codigo:N', title='Grupo'),
+                        alt.Tooltip('var_porte:Q', title='Variação média', format='.2f')
+                    ]
                 ).properties(height=320)
                 st.altair_chart(chart, use_container_width=True)
 
                 st.dataframe(
-                    comp[['codigo', 'descricao', 'porte', 'porte_2', 'var_porte']], 
+                    comp[['codigo', 'descricao', 'porte', 'porte_2', 'var_porte']],
                     use_container_width=True, hide_index=True,
                     column_config={"var_porte": st.column_config.NumberColumn("Variação %", format="%.2f%%")}
                 )
@@ -683,7 +701,7 @@ if aba_atual == "📤 Exportar":
         st.warning("Nenhuma versão disponível para exportar. Importe dados na aba '📥 Importar'.")
 
 # =====================================================
-# 6) GERENCIAR
+# 6) GERENCIAR (exclusão segura)
 # =====================================================
 if aba_atual == "🗑️ Gerenciar":
     lista_v = versoes()
