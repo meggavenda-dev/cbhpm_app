@@ -174,7 +174,7 @@ lista_versoes = versoes()
 v_selecionada = st.sidebar.selectbox("Tabela CBHPM Ativa", lista_versoes, key="v_global") if lista_versoes else None
 
 # Controle de abas persistente usando session_state
-titulos_abas = ["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"]
+titulos_abas = ["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ r", "📤 Exportar", "🗑️ Gerenciar"]
 # Se a versão do Streamlit for >= 1.30, ele suporta o parâmetro 'key' para st.tabs
 # Caso contrário, ele usa a ordem natural. O 'st.session_state' garante que o script carregue corretamente.
 abas = st.tabs(titulos_abas)
@@ -230,17 +230,25 @@ with abas[3]:
         if st.button("Analisar Diferenças", key="btn_analisar_comp"):
             st.session_state.comparacao_realizada = True
             
-        if st.session_state.comparacao_realizada:
+       if st.session_state.comparacao_realizada:
             dfa = buscar_dados("", va, "Código")
-            dfb = buscar_dados("", vb, "Código").rename(columns={"porte":"porte_B","uco":"uco_B","filme":"filme_B"})
+            # Renomeamos a descrição também para evitar o sufixo _x e _y
+            dfb = buscar_dados("", vb, "Código").rename(columns={
+                "porte": "porte_B", 
+                "uco": "uco_B", 
+                "filme": "filme_B",
+                "descricao": "descricao_B" # Adicionado renomeação da descrição
+            })
+            
             comp = dfa.merge(dfb, on="codigo")
             
             if not comp.empty:
-                comp['perc_var'] = ((comp['porte_B'] - comp['porte']) / comp['porte'].replace(0,1)) * 100
+                # Calculamos a variação baseada no Porte
+                comp['perc_var'] = ((comp['porte_B'] - comp['porte']) / comp['porte'].replace(0, 1)) * 100
                 
                 # MÉTRICAS
                 m1, m2, m3 = st.columns(3)
-                m1.metric("Itens", len(comp))
+                m1.metric("Itens em Comum", len(comp))
                 m2.metric("Variação Média", f"{comp['perc_var'].mean():.2f}%")
                 m3.metric("Com Aumento", len(comp[comp['perc_var'] > 0]))
 
@@ -249,12 +257,29 @@ with abas[3]:
                 resumo = comp.groupby('Grupo')['perc_var'].mean().reset_index()
                 
                 chart = alt.Chart(resumo).mark_bar().encode(
-                    x=alt.X('Grupo:N', sort='-y'),
-                    y='perc_var:Q',
+                    x=alt.X('Grupo:N', sort='-y', title="Capítulo (Início do Código)"),
+                    y=alt.Y('perc_var:Q', title="Aumento Médio (%)"),
                     color=alt.condition(alt.datum.perc_var > 0, alt.value('steelblue'), alt.value('orange'))
                 ).properties(height=350)
+                
                 st.altair_chart(chart, use_container_width=True)
-                st.dataframe(comp[['codigo', 'descricao', 'porte', 'porte_B', 'perc_var']], use_container_width=True)
+
+                # CORREÇÃO DO DATAFRAME:
+                # Usamos a 'descricao' da tabela A (dfa) que permaneceu com o nome original após o merge
+                st.write("### Tabela Detalhada")
+                st.dataframe(
+                    comp[['codigo', 'descricao', 'porte', 'porte_B', 'perc_var']], 
+                    column_config={
+                        "codigo": "Código",
+                        "descricao": "Descrição",
+                        "porte": f"Porte ({va})",
+                        "porte_B": f"Porte ({vb})",
+                        "perc_var": st.column_config.NumberColumn("Variação %", format="%.2f%%")
+                    },
+                    use_container_width=True
+                )
+            else:
+                st.warning("Não foram encontrados códigos em comum entre estas duas versões para comparação.")
 
 # --- 5. EXPORTAR ---
 with abas[4]:
