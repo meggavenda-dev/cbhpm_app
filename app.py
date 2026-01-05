@@ -18,13 +18,11 @@ import streamlit as st
 DB_NAME = "data/cbhpm_database.db"
 os.makedirs("data", exist_ok=True)
 
-   
 # Estados iniciais
 if 'comparacao_realizada' not in st.session_state:
     st.session_state.comparacao_realizada = False
-    
-if 'aba_ativa_idx' not in st.session_state:
-    st.session_state.aba_ativa_idx = 0  # primeira aba = Importar
+if 'aba_ativa' not in st.session_state:
+    st.session_state.aba_ativa = "📥 Importar"
 
 # =====================================================
 # CONEXÃO E BANCO DE DADOS
@@ -190,29 +188,15 @@ st.set_page_config(page_title="CBHPM Gestão Inteligente", layout="wide")
 st.title("⚖️ CBHPM • Auditoria e Gestão")
 
 lista_v = versoes()
-v_selecionada = st.sidebar.selectbox("Tabela CBHPM Ativa", lista_v, key="v_global") if lista_v else None
+v_selecionada = st.sidebar.selectbox("Tabela Ativa", lista_v, key="v_global") if lista_v else None
 
-# --- SOLUÇÃO DO ERRO ---
-# 1. Definir os nomes primeiro
-abas_nome = ["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"]
+abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"])
 
-# 2. Criar o rádio invisível para persistência (Opcional, mas deve vir antes das abas)
-# Nota: Se as abas estão pulando, o uso de 'key' no st.tabs é mais simples em versões novas do Streamlit
-aba_selecionada_idx = st.session_state.aba_ativa_idx
-
-# 3. Criar as abas fisicamente
-abas = st.tabs(abas_nome)
-
-# Lógica para registrar qual aba está aberta (ajuda a evitar o pulo)
-def registrar_aba(nome):
-    st.session_state.aba_ativa_idx = abas_nome.index(nome)
-   
 # --- 1. IMPORTAR ---
 # --- 1. IMPORTAR (VERSÃO FINAL - VISUAL LIMPO) ---
 # --- 1. IMPORTAR (VERSÃO CORRIGIDA - SEM TELA BRANCA) ---
 # --- 1. IMPORTAR (RESOLVIDO: SEM NAMEERROR E SEM TELA BRANCA) ---
 with abas[0]:
-    st.session_state.aba_ativa_idx = 0
     st.subheader("Carregar Novos Dados")
 
     # Inicializa variáveis de controle no estado da sessão
@@ -269,7 +253,6 @@ with abas[0]:
 
 # --- 2. CONSULTAR ---
 with abas[1]:
-    st.session_state.aba_ativa_idx = 1
     if v_selecionada:
         st.info(f"Pesquisando na Versão: {v_selecionada}")
         c1, c2 = st.columns([1, 3])
@@ -347,63 +330,53 @@ with abas[2]:
                 else:
                     st.error(f"O código '{cod_calc}' não foi encontrado na tabela {v_selecionada}.")
         
-# --- 4. COMPARAR (CORRIGIDO) ---
+# --- 4. COMPARAR ---
 with abas[3]:
-    st.session_state.aba_ativa_idx = 3
-    # Verifique se o 'if' abaixo tem exatamente 4 espaços de recuo em relação ao 'with'
     if len(lista_v) >= 2:
         col1, col2 = st.columns(2)
-        v1 = col1.selectbox("Versão Anterior", lista_v, key="v1_comp")
-        v2 = col2.selectbox("Versão Atual", lista_v, key="v2_comp")
+        v1 = col1.selectbox("Versão Anterior", lista_v, key="v1")
+        v2 = col2.selectbox("Versão Atual", lista_v, key="v2")
         
-        if st.button("Analisar Reajustes", key="btn_analisar"):
+        if st.button("Analisar Reajustes"):
             st.session_state.comparacao_realizada = True
         
         if st.session_state.comparacao_realizada:
             df1 = buscar_dados("", v1, "Código")
-            df2 = buscar_dados("", v2, "Código").rename(
-                columns={"porte":"porte_2", "uco":"uco_2", "filme":"filme_2", "descricao":"desc_2"}
-            )
+            df2 = buscar_dados("", v2, "Código").rename(columns={"porte":"porte_2", "uco":"uco_2", "filme":"filme_2", "descricao":"desc_2"})
             comp = df1.merge(df2, on="codigo")
             
             if not comp.empty:
                 comp['var_porte'] = ((comp['porte_2'] - comp['porte']) / comp['porte'].replace(0,1)) * 100
                 
+                # Resumo das Métricas
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Itens Comuns", len(comp))
-                m2.metric("Variação Média", f"{comp['var_porte'].mean():.2f}%")
-                m3.metric("Com Aumento", len(comp[comp['var_porte'] > 0]))
+                m2.metric("Variação Média Porte", f"{comp['var_porte'].mean():.2f}%")
+                m3.metric("Itens com Aumento", len(comp[comp['var_porte'] > 0]))
 
-                # Gráfico resumido por grupo
-                comp['Grupo'] = comp['codigo'].astype(str).str[:2]
-                resumo = comp.groupby('Grupo')['var_porte'].mean().reset_index()
+                # Gráfico
+                resumo = comp.groupby(comp['codigo'].str[:2])['var_porte'].mean().reset_index()
                 chart = alt.Chart(resumo).mark_bar().encode(
-                    x=alt.X('Grupo:N', sort='-y', title="Capítulo (Início do Código)"),
-                    y=alt.Y('var_porte:Q', title="Variação Média (%)"),
+                    x=alt.X('codigo:N', title="Grupo (Capítulo)"),
+                    y=alt.Y('var_porte:Q', title="Variação %"),
                     color=alt.condition(alt.datum.var_porte > 0, alt.value('steelblue'), alt.value('orange'))
                 ).properties(height=350)
                 st.altair_chart(chart, use_container_width=True)
 
-                st.dataframe(
-                    comp[['codigo', 'descricao', 'porte', 'porte_2', 'var_porte']], 
-                    use_container_width=True, 
-                    hide_index=True,
-                    column_config={"var_porte": st.column_config.NumberColumn("Variação %", format="%.2f%%")}
-                )
-    else:
-        st.warning("⚠️ É necessário importar ao menos duas tabelas para comparar.")
+                st.dataframe(comp[['codigo', 'descricao', 'porte', 'porte_2', 'var_porte']], 
+                             use_container_width=True, hide_index=True,
+                             column_config={"var_porte": st.column_config.NumberColumn("Variação %", format="%.2f%%")})
+    else: st.warning("Necessário ao menos 2 versões para comparar.")
 
-# --- 5. EXPORTAR (CORRIGIDO) ---
+# --- 5. EXPORTAR ---
 with abas[4]:
-    st.session_state.aba_ativa_idx = 4
     if lista_v:
-        st.subheader("📤 Exportar Banco de Dados")
-        if st.button("📦 Gerar Backup em Excel"):
+        if st.button("📦 Gerar Backup Completo (Excel)"):
             output = BytesIO()
             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
                 with get_connection() as con:
                     pd.read_sql("SELECT * FROM procedimentos", con).to_excel(writer, index=False)
-            st.download_button("📥 Baixar Arquivo", output.getvalue(), "cbhpm_completa.xlsx", key="btn_dl")
+            st.download_button("📥 Baixar Arquivo", output.getvalue(), "cbhpm_completa.xlsx")
 
 # --- 6. GERENCIAR ---
 with abas[5]:
