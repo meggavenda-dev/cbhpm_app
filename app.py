@@ -12,6 +12,12 @@ import requests
 import altair as alt
 import streamlit as st
 
+# =====================================================
+# CONFIGURAÇÕES E ESTADO DA SESSÃO
+# =====================================================
+DB_NAME = "data/cbhpm_database.db"
+os.makedirs("data", exist_ok=True)
+
 # --- INICIALIZAÇÃO DE ESTADO ---
 if 'lista_versoes' not in st.session_state:
     # Tenta carregar as versões do banco ou inicia vazio
@@ -25,18 +31,6 @@ if 'comparacao_realizada' not in st.session_state:
 
 if 'aba_ativa' not in st.session_state:
     st.session_state.aba_ativa = 0
-
-# =====================================================
-# CONFIGURAÇÕES E ESTADO DA SESSÃO
-# =====================================================
-DB_NAME = "data/cbhpm_database.db"
-os.makedirs("data", exist_ok=True)
-
-# Estados iniciais
-if 'comparacao_realizada' not in st.session_state:
-    st.session_state.comparacao_realizada = False
-if 'aba_ativa' not in st.session_state:
-    st.session_state.aba_ativa = "📥 Importar"
 
 # =====================================================
 # CONEXÃO E BANCO DE DADOS
