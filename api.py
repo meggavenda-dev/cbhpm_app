@@ -4,7 +4,7 @@ import sqlite3
 app = FastAPI(title="CBHPM API")
 
 def conn():
-    return sqlite3.connect("cbhpm_database.db")
+    return sqlite3.connect("data/cbhpm_database.db")
 
 @app.get("/versoes")
 def versoes():
