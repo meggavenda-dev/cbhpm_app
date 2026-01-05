@@ -116,6 +116,24 @@ def criar_tabelas():
     con.commit()
     con.close()
 
+def arquivo_ja_importado(h):
+    con = conn()
+    cur = con.cursor()
+    cur.execute("SELECT 1 FROM arquivos_importados WHERE hash=?", (h,))
+    ok = cur.fetchone() is not None
+    con.close()
+    return ok
+
+def registrar_arquivo(h, versao):
+    con = conn()
+    cur = con.cursor()
+    cur.execute(
+        "INSERT OR IGNORE INTO arquivos_importados VALUES (NULL,?,?,?)",
+        (h, versao, datetime.now().isoformat())
+    )
+    con.commit()
+    con.close()
+
 # =====================================================
 # EXCLUSÃO COM ROLLBACK
 # =====================================================
@@ -142,7 +160,7 @@ def excluir_versao(versao):
         con.close()
 
 # =====================================================
-# IMPORTAÇÃO (CORREÇÃO DE ENCODING AQUI)
+# IMPORTAÇÃO
 # =====================================================
 def importar(arquivos, versao):
     mapa = {
@@ -158,16 +176,10 @@ def importar(arquivos, versao):
 
     for arq in arquivos:
         h = gerar_hash_arquivo(arq)
+        if arquivo_ja_importado(h):
+            continue
 
-        if arq.name.lower().endswith(".csv"):
-            try:
-                df = pd.read_csv(arq, sep=";", encoding="utf-8")
-            except UnicodeDecodeError:
-                arq.seek(0)
-                df = pd.read_csv(arq, sep=";", encoding="latin1")
-        else:
-            df = pd.read_excel(arq)
-
+        df = pd.read_excel(arq) if not arq.name.endswith(".csv") else pd.read_csv(arq, sep=";")
         df.columns = [c.strip() for c in df.columns]
 
         dados = {}
@@ -182,15 +194,12 @@ def importar(arquivos, versao):
             df_f[c] = df_f[c].apply(to_float)
 
         for _, r in df_f.iterrows():
-            cur.execute("""
-                INSERT OR IGNORE INTO procedimentos
-                VALUES (NULL,?,?,?,?,?,?)
-            """, tuple(r))
+            cur.execute(
+                "INSERT OR IGNORE INTO procedimentos VALUES (NULL,?,?,?,?,?,?)",
+                tuple(r)
+            )
 
-        cur.execute("""
-            INSERT OR IGNORE INTO arquivos_importados
-            VALUES (NULL,?,?,?)
-        """, (h, versao, datetime.now().isoformat()))
+        registrar_arquivo(h, versao)
 
     con.commit()
     con.close()
@@ -246,6 +255,81 @@ abas = st.tabs([
     "📤 Exportar",
     "🗑️ Excluir versão"
 ])
+
+# ---------------- IMPORTAR ----------------
+with abas[0]:
+    versao = st.text_input("Versão CBHPM")
+    arquivos = st.file_uploader("Arquivos", accept_multiple_files=True)
+    if st.button("Importar dados"):
+        importar(arquivos, versao)
+        st.success("Importação concluída")
+
+# ---------------- CONSULTAR ----------------
+with abas[1]:
+    v = st.selectbox("Tabela CBHPM", versoes())
+    tipo = st.radio("Buscar por", ["Código", "Descrição"])
+    termo = st.text_input("Termo de busca")
+    if st.button("Buscar"):
+        df = buscar_codigo(termo, v) if tipo == "Código" else buscar_descricao(termo, v)
+        st.dataframe(df, use_container_width=True)
+
+# ---------------- CALCULAR ----------------
+with abas[2]:
+    v = st.selectbox("Tabela CBHPM", versoes())
+    codigo = st.text_input("Código do procedimento")
+    col1, col2, col3 = st.columns(3)
+    valor_uco = col1.number_input("Valor da UCO", value=1.0)
+    valor_filme = col2.number_input("Valor do Filme", value=21.70)
+    inflator = col3.number_input("Inflator (%)", value=0.0)
+
+    if st.button("Calcular"):
+        df = buscar_codigo(codigo, v)
+        if df.empty:
+            st.warning("Procedimento não encontrado")
+        else:
+            p = df.iloc[0]
+            fator = 1 + inflator / 100
+            porte = p["porte"] * fator
+            uco = p["uco"] * valor_uco * fator
+            filme = p["filme"] * valor_filme * fator
+            total = porte + uco + filme
+
+            st.success(p["descricao"])
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Porte", f"R$ {porte:,.2f}")
+            c2.metric("UCO", f"R$ {uco:,.2f}")
+            c3.metric("Filme", f"R$ {filme:,.2f}")
+            c4.metric("💰 Total", f"R$ {total:,.2f}")
+
+# ---------------- COMPARAR ----------------
+with abas[3]:
+    v1 = st.selectbox("Versão A", versoes())
+    v2 = st.selectbox("Versão B", versoes())
+    df1 = buscar_codigo("", v1)
+    df2 = buscar_codigo("", v2).rename(
+        columns={"porte": "porte_B", "uco": "uco_B", "filme": "filme_B"}
+    )
+    st.dataframe(df1.merge(df2, on="codigo"), use_container_width=True)
+
+# ---------------- EXPORTAR ----------------
+with abas[4]:
+    tabelas = ["procedimentos", "arquivos_importados"]
+    escolha = st.multiselect("Tabelas", tabelas)
+    con = conn()
+    output = BytesIO()
+
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        for t in escolha if escolha else tabelas:
+            pd.read_sql(f"SELECT * FROM {t}", con).to_excel(
+                writer, sheet_name=t, index=False
+            )
+
+    con.close()
+    st.download_button(
+        "Baixar Excel",
+        data=output.getvalue(),
+        file_name="cbhpm_export.xlsx"
+    )
 
 # ---------------- EXCLUIR ----------------
 with abas[5]:
