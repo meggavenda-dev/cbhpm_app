@@ -134,21 +134,27 @@ def importar(arquivos, versao):
         st.error("Por favor, informe a Versão CBHPM.")
         return False
 
-    mapa = {"codigo": ["Código", "Codigo"], "descricao": ["Descrição", "Descricao"], 
-            "porte": ["Porte"], "uco": ["UCO", "CH"], "filme": ["Filme"]}
+    mapa = {
+        "codigo": ["Código", "Codigo"], 
+        "descricao": ["Descrição", "Descricao"], 
+        "porte": ["Porte"], 
+        "uco": ["UCO", "CH"], 
+        "filme": ["Filme"]
+    }
     
-    con = conn()
+    # Timeout aumentado para evitar 'database is locked'
+    con = sqlite3.connect(DB_NAME, check_same_thread=False, timeout=20)
     cur = con.cursor()
     arquivos_processados = 0
 
-    for arq in arquivos:
-        h = gerar_hash_arquivo(arq)
-        # SEGURANÇA: Não permite importar o mesmo conteúdo duas vezes
-        if arquivo_ja_importado(h):
-            st.warning(f"O conteúdo do arquivo '{arq.name}' já foi importado anteriormente e não será duplicado.")
-            continue
+    try:
+        for arq in arquivos:
+            h = gerar_hash_arquivo(arq)
+            if arquivo_ja_importado(h):
+                st.warning(f"O conteúdo de '{arq.name}' já existe no sistema.")
+                continue
 
-        try:
+            # Leitura do arquivo (CSV ou Excel)
             if arq.name.lower().endswith(".csv"):
                 try:
                     df = pd.read_csv(arq, sep=";", encoding="utf-8")
@@ -159,27 +165,44 @@ def importar(arquivos, versao):
                 df = pd.read_excel(arq)
             
             df.columns = [c.strip() for c in df.columns]
-            dados = {campo: (df[next((c for c in cols if c in df.columns), None)] 
-                     if next((c for c in cols if c in df.columns), None) else 0) 
-                     for campo, cols in mapa.items()}
-
-            df_f = pd.DataFrame(dados)
-            df_f["versao"] = versao
-
-            for c in ["porte", "uco", "filme"]: df_f[c] = df_f[c].apply(to_float)
-
-            for _, r in df_f.iterrows():
-                cur.execute("""INSERT OR IGNORE INTO procedimentos (codigo, descricao, porte, uco, filme, versao)
-                               VALUES (?,?,?,?,?,?)""", (r['codigo'], r['descricao'], r['porte'], r['uco'], r['filme'], r['versao']))
             
-            registrar_arquivo(h, versao)
-            arquivos_processados += 1
-        except Exception as e:
-            st.error(f"Erro crítico no arquivo {arq.name}: {e}")
+            # Preparação dos dados
+            dados_lista = []
+            for _, row in df.iterrows():
+                # Busca a coluna correta baseada no mapa
+                d = {}
+                for campo, cols in mapa.items():
+                    col_encontrada = next((c for c in cols if c in df.columns), None)
+                    d[campo] = to_float(row[col_encontrada]) if col_encontrada else 0.0
+                
+                # Tupla para o executemany
+                dados_lista.append((
+                    str(row[next((c for c in mapa["codigo"] if c in df.columns))]), # codigo
+                    str(row[next((c for c in mapa["descricao"] if c in df.columns))]), # descricao
+                    d["porte"], d["uco"], d["filme"], versao
+                ))
 
-    con.commit()
-    con.close()
-    
+            # Inserção em massa (MUITO mais rápido)
+            cur.executemany("""
+                INSERT OR IGNORE INTO procedimentos (codigo, descricao, porte, uco, filme, versao)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, dados_lista)
+            
+            # Registrar o hash do arquivo
+            cur.execute("INSERT OR IGNORE INTO arquivos_importados (hash, versao, data) VALUES (?, ?, ?)", 
+                        (h, versao, datetime.now().isoformat()))
+            
+            arquivos_processados += 1
+
+        con.commit() # Salva tudo de uma vez
+        
+    except Exception as e:
+        con.rollback() # Se der erro em qualquer arquivo, desfaz tudo para não corromper
+        st.error(f"Erro durante a importação: {e}")
+        return False
+    finally:
+        con.close()
+
     if arquivos_processados > 0:
         salvar_banco_github(f"Importação {versao}")
         return True
