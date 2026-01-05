@@ -297,9 +297,11 @@ with abas[3]:
             })
             comp = dfa.merge(dfb, on="codigo")
             if not comp.empty:
-                comp['perc_var'] = comp.apply(
-                    lambda row: ((row['porte_B'] - row['porte']) / row['porte'] * 100) if row['porte'] else 0,
+                    comp['perc_var'] = comp.apply(
+                    lambda row: ((row['porte_B'] - row['porte']) / row['porte'] * 100) if row['porte'] != 0 else 0,
                     axis=1
+                )
+
                 )
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Itens em Comum", len(comp))
