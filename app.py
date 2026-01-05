@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
+from datetime import datetime
 
 # =====================================================
-# CONFIGURAÇÃO BANCO LOCAL (SQLite)
+# CONFIG BANCO LOCAL
 # =====================================================
 DB_NAME = "cbhpm_local.db"
 
@@ -11,11 +12,11 @@ def get_connection():
     return sqlite3.connect(DB_NAME, check_same_thread=False)
 
 # =====================================================
-# FUNÇÃO UTILITÁRIA
+# UTIL
 # =====================================================
 def to_float(valor):
     try:
-        if valor is None:
+        if pd.isna(valor):
             return 0.0
         if isinstance(valor, str):
             valor = valor.replace(",", ".").strip()
@@ -26,13 +27,13 @@ def to_float(valor):
         return 0.0
 
 # =====================================================
-# CRIAÇÃO DA TABELA
+# TABELAS
 # =====================================================
-def criar_tabela():
+def criar_tabelas():
     conn = get_connection()
-    cursor = conn.cursor()
+    c = conn.cursor()
 
-    cursor.execute("""
+    c.execute("""
         CREATE TABLE IF NOT EXISTS procedimentos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             codigo TEXT,
@@ -45,46 +46,83 @@ def criar_tabela():
         )
     """)
 
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS log_importacao (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            versao TEXT,
+            arquivo TEXT,
+            problema TEXT,
+            data TEXT
+        )
+    """)
+
     conn.commit()
     conn.close()
 
 # =====================================================
-# IMPORTAÇÃO CSV
+# LEITURA FLEXÍVEL
 # =====================================================
-def importar_csvs(arquivos, versao):
+def ler_arquivo(arquivo):
+    if arquivo.name.lower().endswith(".csv"):
+        return pd.read_csv(
+            arquivo,
+            encoding="latin-1",
+            sep=";",
+            engine="python",
+            on_bad_lines="skip"
+        )
+    else:
+        return pd.read_excel(arquivo)
+
+# =====================================================
+# IMPORTAÇÃO INTELIGENTE
+# =====================================================
+def importar_arquivos(arquivos, versao):
     conn = get_connection()
-    cursor = conn.cursor()
+    c = conn.cursor()
+
+    mapa_colunas = {
+        'codigo': ['Código', 'Codigo', 'CODIGO'],
+        'descricao': ['Descrição', 'Descricao'],
+        'porte': ['Porte', 'Porte Cirúrgico', 'Porte Anestésico'],
+        'uco': ['UCO', 'UCO (CH)', 'CH', 'UCO_CBPM'],
+        'filme': ['Filme', 'Filme Radiológico', 'Filme Rx']
+    }
 
     for arquivo in arquivos:
         try:
-            df = pd.read_csv(
-                arquivo,
-                encoding="latin-1",
-                sep=";",
-                engine="python",
-                on_bad_lines="skip"
-            )
+            df = ler_arquivo(arquivo)
+            df.columns = [col.strip() for col in df.columns]
 
-            # 🔎 Normaliza nomes das colunas
-            df.columns = [c.strip() for c in df.columns]
+            encontrados = {}
+            ausentes = []
 
-            # Mapeamento flexível
-            mapa = {
-                'codigo': ['Código', 'Codigo', 'CODIGO'],
-                'descricao': ['Descrição', 'Descricao'],
-                'porte': ['Porte', 'Porte Cirúrgico', 'Porte Anestésico'],
-                'uco': ['UCO', 'UCO (CH)', 'CH', 'UCO_CBPM'],
-                'filme': ['Filme', 'Filme Radiológico', 'Filme Rx']
-            }
-
-            dados = {}
-
-            for campo, possiveis in mapa.items():
-                col = next((c for c in possiveis if c in df.columns), None)
+            for campo, possibilidades in mapa_colunas.items():
+                col = next((c for c in possibilidades if c in df.columns), None)
                 if col:
-                    dados[campo] = df[col]
+                    encontrados[campo] = col
                 else:
-                    dados[campo] = 0.0  # se não existir, zera
+                    ausentes.append(campo)
+
+            # LOG DE COLUNAS AUSENTES
+            if ausentes:
+                c.execute("""
+                    INSERT INTO log_importacao (versao, arquivo, problema, data)
+                    VALUES (?, ?, ?, ?)
+                """, (
+                    versao,
+                    arquivo.name,
+                    f"Colunas ausentes: {', '.join(ausentes)}",
+                    datetime.now().isoformat()
+                ))
+
+            # MONTA DATAFRAME FINAL
+            dados = {}
+            for campo in mapa_colunas.keys():
+                if campo in encontrados:
+                    dados[campo] = df[encontrados[campo]]
+                else:
+                    dados[campo] = 0.0
 
             df_final = pd.DataFrame(dados)
             df_final['versao'] = versao
@@ -92,167 +130,141 @@ def importar_csvs(arquivos, versao):
             for col in ['porte', 'uco', 'filme']:
                 df_final[col] = df_final[col].apply(to_float)
 
+            # INSERÇÃO
             for _, row in df_final.iterrows():
-                cursor.execute("""
+                c.execute("""
                     INSERT OR IGNORE INTO procedimentos
                     (codigo, descricao, porte, uco, filme, versao)
                     VALUES (?, ?, ?, ?, ?, ?)
                 """, tuple(row))
 
+            # VISUAL
+            st.success(f"✔ {arquivo.name} importado")
+            st.caption(f"Colunas detectadas: {encontrados}")
+
         except Exception as e:
-            st.error(f"Erro ao importar {arquivo.name}: {e}")
+            c.execute("""
+                INSERT INTO log_importacao (versao, arquivo, problema, data)
+                VALUES (?, ?, ?, ?)
+            """, (
+                versao,
+                arquivo.name,
+                str(e),
+                datetime.now().isoformat()
+            ))
+            st.error(f"Erro em {arquivo.name}: {e}")
 
     conn.commit()
     conn.close()
-
 
 # =====================================================
 # CONSULTAS
 # =====================================================
 def listar_versoes():
     conn = get_connection()
-    df = pd.read_sql(
-        "SELECT DISTINCT versao FROM procedimentos ORDER BY versao",
-        conn
-    )
+    df = pd.read_sql("SELECT DISTINCT versao FROM procedimentos ORDER BY versao", conn)
     conn.close()
     return df['versao'].tolist()
 
-def buscar_por_codigo(codigo, versao):
+def buscar_codigo(codigo, versao):
     conn = get_connection()
-    df = pd.read_sql(
-        """
+    df = pd.read_sql("""
         SELECT codigo, descricao, porte, uco, filme
         FROM procedimentos
         WHERE codigo LIKE ? AND versao = ?
-        """,
-        conn,
-        params=(f"%{codigo}%", versao)
-    )
+    """, conn, params=(f"%{codigo}%", versao))
     conn.close()
     return df
 
-def buscar_por_descricao(descricao, versao):
+def buscar_descricao(desc, versao):
     conn = get_connection()
-    df = pd.read_sql(
-        """
+    df = pd.read_sql("""
         SELECT codigo, descricao, porte, uco, filme
         FROM procedimentos
         WHERE descricao LIKE ? AND versao = ?
-        """,
-        conn,
-        params=(f"%{descricao}%", versao)
-    )
+    """, conn, params=(f"%{desc}%", versao))
+    conn.close()
+    return df
+
+def consultar_logs():
+    conn = get_connection()
+    df = pd.read_sql("SELECT * FROM log_importacao ORDER BY data DESC", conn)
     conn.close()
     return df
 
 # =====================================================
 # INTERFACE
 # =====================================================
-st.set_page_config(page_title="CBHPM – Banco Local", layout="wide")
-st.title("📊 CBHPM – Banco Local (SQLite)")
+st.set_page_config("CBHPM – Banco Local Profissional", layout="wide")
+st.title("📊 CBHPM – Banco Local Profissional")
 
-criar_tabela()
+criar_tabelas()
 
 menu = st.sidebar.radio(
     "Menu",
-    ["📥 Importar CBHPM", "📋 Consultar", "🧮 Painel de Cálculo"]
+    ["📥 Importar", "📋 Consultar", "🧮 Calcular", "🧾 Log de Importação"]
 )
 
 # =====================================================
-# IMPORTAÇÃO
+# IMPORTAR
 # =====================================================
-if menu == "📥 Importar CBHPM":
-    st.subheader("Importar tabela CBHPM")
-
-    versao = st.text_input("Nome da Tabela / Versão")
+if menu == "📥 Importar":
+    st.subheader("Importação Inteligente CBHPM")
+    versao = st.text_input("Versão / Ano")
     arquivos = st.file_uploader(
-        "Selecione os CSVs",
-        type="csv",
+        "CSV ou Excel",
+        type=["csv", "xlsx"],
         accept_multiple_files=True
     )
 
     if st.button("🚀 Importar"):
         if not versao or not arquivos:
-            st.warning("Informe o nome da versão e selecione os arquivos.")
+            st.warning("Informe a versão e os arquivos.")
         else:
-            importar_csvs(arquivos, versao)
-            st.success("Importação concluída com sucesso!")
+            importar_arquivos(arquivos, versao)
 
 # =====================================================
-# CONSULTA
+# CONSULTAR
 # =====================================================
 if menu == "📋 Consultar":
-    st.subheader("Consulta de Procedimentos")
-
     versoes = listar_versoes()
-
     if versoes:
-        versao = st.selectbox("Tabela CBHPM", versoes)
+        versao = st.selectbox("Versão", versoes)
         tipo = st.radio("Buscar por", ["Código", "Descrição"])
-        termo = st.text_input("Digite o termo")
+        termo = st.text_input("Termo")
 
         if st.button("🔎 Buscar"):
-            if tipo == "Código":
-                df = buscar_por_codigo(termo, versao)
-            else:
-                df = buscar_por_descricao(termo, versao)
-
-            if df.empty:
-                st.warning("Nenhum resultado encontrado.")
-            else:
-                st.dataframe(df, use_container_width=True)
+            df = buscar_codigo(termo, versao) if tipo == "Código" else buscar_descricao(termo, versao)
+            st.dataframe(df, use_container_width=True)
     else:
         st.warning("Nenhuma tabela importada.")
 
 # =====================================================
-# PAINEL DE CÁLCULO
+# CALCULAR
 # =====================================================
-if menu == "🧮 Painel de Cálculo":
-    st.subheader("Painel de Cálculo CBHPM")
-
+if menu == "🧮 Calcular":
     versoes = listar_versoes()
-
     if versoes:
-        col1, col2, col3, col4 = st.columns(4)
+        versao = st.selectbox("Versão", versoes)
+        codigo = st.text_input("Código")
+        valor_filme = st.number_input("Valor Filme", 0.0, 1000.0, 21.70)
+        inflator = st.number_input("Inflator (%)", 0.0, 500.0, 0.0)
 
-        with col1:
-            versao = st.selectbox("Tabela CBHPM", versoes)
-
-        with col2:
-            codigo = st.text_input("Código")
-
-        with col3:
-            valor_filme = st.number_input("Valor Filme (m²)", 0.0, 1000.0, 21.70)
-
-        with col4:
-            inflator = st.number_input("Inflator (%)", 0.0, 500.0, 0.0)
-
-        if st.button("🧮 Calcular"):
-            df = buscar_por_codigo(codigo, versao)
-
+        if st.button("Calcular"):
+            df = buscar_codigo(codigo, versao)
             if df.empty:
-                st.warning("Procedimento não encontrado.")
+                st.warning("Não encontrado")
             else:
                 p = df.iloc[0]
-
-                porte = to_float(p['porte'])
-                uco = to_float(p['uco'])
-                filme = to_float(p['filme'])
-
-                fator = 1 + (inflator / 100)
-                porte_corr = porte * fator
-                uco_corr = uco * fator
-
-                total = porte_corr + uco_corr + (filme * valor_filme)
-
-                st.info(p['descricao'])
-
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Porte corrigido", f"R$ {porte_corr:,.2f}")
-                c2.metric("UCO corrigido", f"R$ {uco_corr:,.2f}")
-                c3.metric("Filme", f"R$ {(filme * valor_filme):,.2f}")
-
+                fator = 1 + inflator / 100
+                total = (p['porte'] + p['uco']) * fator + p['filme'] * valor_filme
                 st.success(f"💰 Valor Total: R$ {total:,.2f}")
-    else:
-        st.warning("Nenhuma tabela importada.")
+                st.caption(p['descricao'])
+
+# =====================================================
+# LOG
+# =====================================================
+if menu == "🧾 Log de Importação":
+    st.subheader("Inconsistências Detectadas")
+    df_log = consultar_logs()
+    st.dataframe(df_log, use_container_width=True)
