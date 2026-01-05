@@ -1,291 +1,197 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from datetime import datetime
+from io import BytesIO
+
+# =====================================================
+# CONFIGURAÇÃO
+# =====================================================
+st.set_page_config(page_title="CBHPM Manager", layout="wide")
 
 DB_NAME = "cbhpm_database.db"
 
-def conn():
-    return sqlite3.connect(DB_NAME, check_same_thread=False)
 
 # =====================================================
-# UTIL
+# CONEXÃO COM BANCO
 # =====================================================
-def to_float(v):
+def get_connection():
+    return sqlite3.connect(DB_NAME)
+
+
+# =====================================================
+# FUNÇÕES UTILITÁRIAS
+# =====================================================
+def listar_tabelas():
+    conn = get_connection()
+    query = """
+        SELECT name FROM sqlite_master
+        WHERE type='table'
+        AND name NOT LIKE 'sqlite_%'
+        ORDER BY name
+    """
+    tabelas = pd.read_sql(query, conn)["name"].tolist()
+    conn.close()
+    return tabelas
+
+
+def carregar_tabela(nome_tabela):
+    conn = get_connection()
+    df = pd.read_sql(f"SELECT * FROM {nome_tabela}", conn)
+    conn.close()
+    return df
+
+
+def to_float(valor):
     try:
-        if pd.isna(v):
+        if valor is None:
             return 0.0
-        if isinstance(v, str):
-            v = v.replace(",", ".").strip()
-        return float(v)
+        if isinstance(valor, str):
+            valor = valor.replace(",", ".").strip()
+        return float(valor)
     except:
         return 0.0
 
-# =====================================================
-# TABELAS
-# =====================================================
-def criar_tabelas():
-    con = conn()
-    c = con.cursor()
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS procedimentos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        codigo TEXT,
-        descricao TEXT,
-        porte REAL,
-        uco REAL,
-        filme REAL,
-        versao TEXT,
-        UNIQUE (codigo, versao)
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS convenios (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nome TEXT UNIQUE,
-        inflator REAL,
-        valor_filme REAL
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS log_importacao (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        versao TEXT,
-        arquivo TEXT,
-        problema TEXT,
-        data TEXT
-    )
-    """)
-
-    con.commit()
-    con.close()
 
 # =====================================================
-# IMPORTAÇÃO
+# PESQUISA CBHPM
 # =====================================================
-def ler_arquivo(arq):
-    if arq.name.lower().endswith(".csv"):
-        return pd.read_csv(arq, sep=";", encoding="latin-1", engine="python")
-    return pd.read_excel(arq)
+def pesquisar_cbpmp(tabela, codigo=None, descricao=None):
+    conn = get_connection()
 
-def importar(arquivos, versao):
-    mapa = {
-        "codigo": ["Código", "Codigo"],
-        "descricao": ["Descrição", "Descricao"],
-        "porte": ["Porte", "Porte Cirúrgico"],
-        "uco": ["UCO", "CH"],
-        "filme": ["Filme", "Filme Rx"]
-    }
+    query = f"SELECT * FROM {tabela} WHERE 1=1"
+    params = []
 
-    con = conn()
-    cur = con.cursor()
+    if codigo:
+        query += " AND Codigo LIKE ?"
+        params.append(f"%{codigo}%")
 
-    for arq in arquivos:
-        try:
-            df = ler_arquivo(arq)
-            df.columns = [c.strip() for c in df.columns]
+    if descricao:
+        query += " AND Descricao LIKE ?"
+        params.append(f"%{descricao}%")
 
-            dados = {}
-            faltando = []
+    df = pd.read_sql(query, conn, params=params)
+    conn.close()
+    return df
 
-            for campo, colunas in mapa.items():
-                col = next((c for c in colunas if c in df.columns), None)
-                if col:
-                    dados[campo] = df[col]
-                else:
-                    dados[campo] = 0.0
-                    faltando.append(campo)
-
-            if faltando:
-                cur.execute("""
-                    INSERT INTO log_importacao
-                    (versao, arquivo, problema, data)
-                    VALUES (?,?,?,?)
-                """, (versao, arq.name, f"Colunas ausentes: {faltando}", datetime.now().isoformat()))
-
-            df_f = pd.DataFrame(dados)
-            df_f["versao"] = versao
-
-            for c in ["porte", "uco", "filme"]:
-                df_f[c] = df_f[c].apply(to_float)
-
-            for _, r in df_f.iterrows():
-                cur.execute("""
-                    INSERT OR IGNORE INTO procedimentos
-                    (codigo, descricao, porte, uco, filme, versao)
-                    VALUES (?,?,?,?,?,?)
-                """, tuple(r))
-
-        except Exception as e:
-            cur.execute("""
-                INSERT INTO log_importacao
-                (versao, arquivo, problema, data)
-                VALUES (?,?,?,?)
-            """, (versao, arq.name, str(e), datetime.now().isoformat()))
-
-    con.commit()
-    con.close()
 
 # =====================================================
-# CONSULTAS
+# CÁLCULO DE HONORÁRIOS
 # =====================================================
-def versoes():
-    return pd.read_sql(
-        "SELECT DISTINCT versao FROM procedimentos ORDER BY versao",
-        conn()
-    )["versao"].tolist()
+def calcular_honorarios(df, valor_uco, valor_porte):
+    df = df.copy()
 
-def buscar_codigo(codigo, versao):
-    return pd.read_sql("""
-        SELECT codigo, descricao, porte, uco, filme
-        FROM procedimentos
-        WHERE codigo LIKE ? AND versao = ?
-    """, conn(), params=(f"%{codigo}%", versao))
+    df["UCO"] = df["UCO"].apply(to_float)
+    df["Porte"] = df["Porte"].apply(to_float)
 
-def buscar_descricao(desc, versao):
-    return pd.read_sql("""
-        SELECT codigo, descricao, porte, uco, filme
-        FROM procedimentos
-        WHERE descricao LIKE ? AND versao = ?
-    """, conn(), params=(f"%{desc}%", versao))
+    df["Valor UCO (R$)"] = df["UCO"] * valor_uco
+    df["Valor Porte (R$)"] = df["Porte"] * valor_porte
+    df["Honorário Total (R$)"] = df["Valor UCO (R$)"] + df["Valor Porte (R$)"]
+
+    return df
+
 
 # =====================================================
-# CÁLCULOS
+# EXPORTAÇÃO PARA EXCEL
 # =====================================================
-def calcular_manual(codigo, versao, inflator, valor_filme):
-    df = buscar_codigo(codigo, versao)
-    if df.empty:
-        return None
+def exportar_excel(tabelas_selecionadas=None):
+    todas_tabelas = listar_tabelas()
 
-    p = df.iloc[0]
-    fator = 1 + inflator / 100
+    if not tabelas_selecionadas:
+        tabelas_selecionadas = todas_tabelas
 
-    porte = p["porte"] * fator
-    uco = p["uco"] * fator
-    filme = p["filme"] * valor_filme
+    output = BytesIO()
 
-    total = porte + uco + filme
-    return p["descricao"], porte, uco, filme, total
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        for tabela in tabelas_selecionadas:
+            df = carregar_tabela(tabela)
+            df.to_excel(writer, sheet_name=tabela[:31], index=False)
 
-def simular_convenio(codigo, versao, convenio):
-    con = conn()
-    proc = pd.read_sql(
-        "SELECT porte, uco, filme FROM procedimentos WHERE codigo=? AND versao=?",
-        con, params=(codigo, versao)
-    )
-    conv = pd.read_sql(
-        "SELECT inflator, valor_filme FROM convenios WHERE nome=?",
-        con, params=(convenio,)
-    )
-    con.close()
+    output.seek(0)
+    return output
 
-    if proc.empty or conv.empty:
-        return None
-
-    p = proc.iloc[0]
-    c = conv.iloc[0]
-    fator = 1 + c["inflator"] / 100
-
-    total = (p["porte"] + p["uco"]) * fator + p["filme"] * c["valor_filme"]
-    return total
-
-# =====================================================
-# EXPORTAÇÃO
-# =====================================================
-def exportar_excel():
-    v = versoes()
-    arquivo = "CBHPM_Completa.xlsx"
-    with pd.ExcelWriter(arquivo, engine="xlsxwriter") as w:
-        for x in v:
-            pd.read_sql(
-                "SELECT codigo, descricao, porte, uco, filme FROM procedimentos WHERE versao=?",
-                conn(), params=(x,)
-            ).to_excel(w, sheet_name=x[:31], index=False)
-    return arquivo
 
 # =====================================================
 # INTERFACE
 # =====================================================
-st.set_page_config("CBHPM Profissional", layout="wide")
-st.title("📊 Plataforma CBHPM")
+st.title("📘 Gerenciador CBHPM")
 
-criar_tabelas()
+menu = st.sidebar.radio(
+    "Menu",
+    [
+        "Pesquisar Procedimentos",
+        "Simulador de Honorários",
+        "Exportar Banco para Excel"
+    ]
+)
 
-menu = st.sidebar.radio("Menu", [
-    "📥 Importar",
-    "📋 Consultar",
-    "🧮 Calcular",
-    "🔍 Comparar",
-    "📤 Exportar Excel"
-])
-
-# =====================================================
-# IMPORTAR
-# =====================================================
-if menu == "📥 Importar":
-    versao = st.text_input("Versão CBHPM")
-    arquivos = st.file_uploader("CSV ou XLSX", ["csv", "xlsx"], True)
-    if st.button("Importar"):
-        importar(arquivos, versao)
-        st.success("Importação concluída")
+tabelas = listar_tabelas()
 
 # =====================================================
-# CONSULTAR
+# 🔍 PESQUISA
 # =====================================================
-if menu == "📋 Consultar":
-    v = st.selectbox("Versão", versoes())
-    tipo = st.radio("Buscar por", ["Código", "Descrição"])
-    termo = st.text_input("Termo")
+if menu == "Pesquisar Procedimentos":
+    st.subheader("🔍 Pesquisa CBHPM")
 
-    if st.button("Buscar"):
-        df = buscar_codigo(termo, v) if tipo == "Código" else buscar_descricao(termo, v)
-        st.dataframe(df, use_container_width=True)
+    tabela = st.selectbox("Versão CBHPM", tabelas)
+    col1, col2 = st.columns(2)
+
+    with col1:
+        codigo = st.text_input("Código do procedimento")
+
+    with col2:
+        descricao = st.text_input("Descrição do procedimento")
+
+    if st.button("Pesquisar"):
+        resultado = pesquisar_cbpmp(tabela, codigo, descricao)
+        st.dataframe(resultado, use_container_width=True)
+
 
 # =====================================================
-# CALCULAR
+# 🧮 SIMULADOR DE HONORÁRIOS
 # =====================================================
-if menu == "🧮 Calcular":
-    v = st.selectbox("Versão", versoes())
+elif menu == "Simulador de Honorários":
+    st.subheader("🧮 Simulador de Honorários")
+
+    tabela = st.selectbox("Versão CBHPM", tabelas)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        valor_uco = st.number_input("Valor da UCO (R$)", min_value=0.0, value=20.0)
+
+    with col2:
+        valor_porte = st.number_input("Valor do Porte (R$)", min_value=0.0, value=100.0)
+
     codigo = st.text_input("Código do procedimento")
-    inflator = st.number_input("Inflator (%)", 0.0, 500.0, 0.0)
-    valor_filme = st.number_input("Valor do filme", 0.0, 1000.0, 21.70)
+    descricao = st.text_input("Descrição do procedimento")
 
     if st.button("Calcular"):
-        r = calcular_manual(codigo, v, inflator, valor_filme)
-        if not r:
-            st.warning("Procedimento não encontrado")
+        df = pesquisar_cbpmp(tabela, codigo, descricao)
+
+        if df.empty:
+            st.warning("Nenhum procedimento encontrado.")
         else:
-            desc, porte, uco, filme, total = r
-            st.info(desc)
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Porte", f"R$ {porte:,.2f}")
-            c2.metric("UCO", f"R$ {uco:,.2f}")
-            c3.metric("Filme", f"R$ {filme:,.2f}")
-            st.success(f"💰 Total: R$ {total:,.2f}")
+            df_calc = calcular_honorarios(df, valor_uco, valor_porte)
+            st.dataframe(df_calc, use_container_width=True)
+
 
 # =====================================================
-# COMPARAR
+# 📤 EXPORTAR EXCEL
 # =====================================================
-if menu == "🔍 Comparar":
-    v1 = st.selectbox("Versão base", versoes())
-    v2 = st.selectbox("Versão comparada", versoes())
-    if st.button("Comparar"):
-        df1 = buscar_codigo("", v1)
-        df2 = buscar_codigo("", v2).rename(
-            columns={"porte":"porte_2","uco":"uco_2","filme":"filme_2"}
-        )
-        df = df1.merge(df2, on="codigo")
-        df["Δ Porte"] = df["porte_2"] - df["porte"]
-        df["Δ UCO"] = df["uco_2"] - df["uco"]
-        st.dataframe(df, use_container_width=True)
+elif menu == "Exportar Banco para Excel":
+    st.subheader("📤 Exportar banco de dados")
 
-# =====================================================
-# EXPORTAR
-# =====================================================
-if menu == "📤 Exportar Excel":
+    tabelas_selecionadas = st.multiselect(
+        "Selecione as tabelas que deseja exportar (se não selecionar nenhuma, todas serão exportadas):",
+        options=tabelas
+    )
+
     if st.button("Gerar Excel"):
-        arq = exportar_excel()
-        st.download_button("Download", open(arq,"rb"), file_name=arq)
+        arquivo = exportar_excel(tabelas_selecionadas)
+
+        st.download_button(
+            label="⬇️ Baixar arquivo Excel",
+            data=arquivo,
+            file_name="cbhpm_exportacao.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
