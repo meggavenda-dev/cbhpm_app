@@ -1,12 +1,14 @@
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine, text
+import sqlite3
 
 # =====================================================
-# CONFIGURAÇÃO SUPABASE (via Secrets)
+# CONFIGURAÇÃO BANCO LOCAL (SQLite)
 # =====================================================
-DATABASE_URL = st.secrets["SUPABASE_DATABASE_URL"]
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+DB_NAME = "cbhpm_local.db"
+
+def get_connection():
+    return sqlite3.connect(DB_NAME, check_same_thread=False)
 
 # =====================================================
 # FUNÇÃO UTILITÁRIA
@@ -24,27 +26,35 @@ def to_float(valor):
         return 0.0
 
 # =====================================================
-# BANCO DE DADOS
+# CRIAÇÃO DA TABELA
 # =====================================================
 def criar_tabela():
-    with engine.begin() as conn:
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS procedimentos (
-                id SERIAL PRIMARY KEY,
-                codigo TEXT,
-                descricao TEXT,
-                porte NUMERIC,
-                uco NUMERIC,
-                filme NUMERIC,
-                versao TEXT,
-                UNIQUE (codigo, versao)
-            )
-        """))
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS procedimentos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT,
+            descricao TEXT,
+            porte REAL,
+            uco REAL,
+            filme REAL,
+            versao TEXT,
+            UNIQUE (codigo, versao)
+        )
+    """)
+
+    conn.commit()
+    conn.close()
 
 # =====================================================
-# IMPORTAÇÃO
+# IMPORTAÇÃO CSV
 # =====================================================
-def importar_csvs(arquivos, nome_tabela):
+def importar_csvs(arquivos, versao):
+    conn = get_connection()
+    cursor = conn.cursor()
+
     for arquivo in arquivos:
         try:
             df = pd.read_csv(
@@ -56,65 +66,70 @@ def importar_csvs(arquivos, nome_tabela):
             )
 
             df = df[['Código', 'Descrição', 'Porte', 'UCO', 'Filme']]
-            df['versao'] = nome_tabela
-
-            df.columns = ['codigo', 'descricao', 'porte', 'uco', 'filme', 'versao']
+            df.columns = ['codigo', 'descricao', 'porte', 'uco', 'filme']
+            df['versao'] = versao
 
             for col in ['porte', 'uco', 'filme']:
                 df[col] = df[col].apply(to_float)
 
-            with engine.begin() as conn:
-                for _, row in df.iterrows():
-                    conn.execute(text("""
-                        INSERT INTO procedimentos
-                        (codigo, descricao, porte, uco, filme, versao)
-                        VALUES (:codigo, :descricao, :porte, :uco, :filme, :versao)
-                        ON CONFLICT (codigo, versao) DO NOTHING
-                    """), row.to_dict())
+            for _, row in df.iterrows():
+                cursor.execute("""
+                    INSERT OR IGNORE INTO procedimentos
+                    (codigo, descricao, porte, uco, filme, versao)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, tuple(row))
 
         except Exception as e:
             st.error(f"Erro ao importar {arquivo.name}: {e}")
+
+    conn.commit()
+    conn.close()
 
 # =====================================================
 # CONSULTAS
 # =====================================================
 def listar_versoes():
-    with engine.connect() as conn:
-        df = pd.read_sql(
-            "SELECT DISTINCT versao FROM procedimentos ORDER BY versao",
-            conn
-        )
+    conn = get_connection()
+    df = pd.read_sql(
+        "SELECT DISTINCT versao FROM procedimentos ORDER BY versao",
+        conn
+    )
+    conn.close()
     return df['versao'].tolist()
 
 def buscar_por_codigo(codigo, versao):
-    with engine.connect() as conn:
-        return pd.read_sql(
-            """
-            SELECT codigo, descricao, porte, uco, filme
-            FROM procedimentos
-            WHERE codigo ILIKE %s AND versao = %s
-            """,
-            conn,
-            params=(codigo, versao)
-        )
+    conn = get_connection()
+    df = pd.read_sql(
+        """
+        SELECT codigo, descricao, porte, uco, filme
+        FROM procedimentos
+        WHERE codigo LIKE ? AND versao = ?
+        """,
+        conn,
+        params=(f"%{codigo}%", versao)
+    )
+    conn.close()
+    return df
 
 def buscar_por_descricao(descricao, versao):
-    with engine.connect() as conn:
-        return pd.read_sql(
-            """
-            SELECT codigo, descricao, porte, uco, filme
-            FROM procedimentos
-            WHERE descricao ILIKE %s AND versao = %s
-            """,
-            conn,
-            params=(f"%{descricao}%", versao)
-        )
+    conn = get_connection()
+    df = pd.read_sql(
+        """
+        SELECT codigo, descricao, porte, uco, filme
+        FROM procedimentos
+        WHERE descricao LIKE ? AND versao = ?
+        """,
+        conn,
+        params=(f"%{descricao}%", versao)
+    )
+    conn.close()
+    return df
 
 # =====================================================
 # INTERFACE
 # =====================================================
-st.set_page_config(page_title="CBHPM – Supabase", layout="wide")
-st.title("📊 CBHPM – Banco Permanente (Supabase)")
+st.set_page_config(page_title="CBHPM – Banco Local", layout="wide")
+st.title("📊 CBHPM – Banco Local (SQLite)")
 
 criar_tabela()
 
@@ -129,7 +144,7 @@ menu = st.sidebar.radio(
 if menu == "📥 Importar CBHPM":
     st.subheader("Importar tabela CBHPM")
 
-    nome_tabela = st.text_input("Nome da Tabela / Versão")
+    versao = st.text_input("Nome da Tabela / Versão")
     arquivos = st.file_uploader(
         "Selecione os CSVs",
         type="csv",
@@ -137,10 +152,10 @@ if menu == "📥 Importar CBHPM":
     )
 
     if st.button("🚀 Importar"):
-        if not nome_tabela or not arquivos:
-            st.warning("Informe nome da tabela e os arquivos.")
+        if not versao or not arquivos:
+            st.warning("Informe o nome da versão e selecione os arquivos.")
         else:
-            importar_csvs(arquivos, nome_tabela)
+            importar_csvs(arquivos, versao)
             st.success("Importação concluída com sucesso!")
 
 # =====================================================
@@ -154,7 +169,6 @@ if menu == "📋 Consultar":
     if versoes:
         versao = st.selectbox("Tabela CBHPM", versoes)
         tipo = st.radio("Buscar por", ["Código", "Descrição"])
-
         termo = st.text_input("Digite o termo")
 
         if st.button("🔎 Buscar"):
