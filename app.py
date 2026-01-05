@@ -10,7 +10,7 @@ import base64
 # =====================================================
 # CONFIG
 # =====================================================
-DB_NAME = "cbhpm_database.db"
+DB_NAME = "data/cbhpm_database.db"
 
 # =====================================================
 # GITHUB – PERSISTÊNCIA (GAMBIARRA CONTROLADA)
