@@ -17,7 +17,6 @@ import streamlit as st
 DB_NAME = "data/cbhpm_database.db"
 os.makedirs("data", exist_ok=True)
 
-# Inicializa estado
 if 'comparacao_realizada' not in st.session_state:
     st.session_state.comparacao_realizada = False
 
@@ -297,7 +296,7 @@ with abas[3]:
             })
             comp = dfa.merge(dfb, on="codigo")
             if not comp.empty:
-                    comp['perc_var'] = comp.apply(
+                comp['perc_var'] = comp.apply(
                     lambda row: ((row['porte_B'] - row['porte']) / row['porte'] * 100) if row['porte'] != 0 else 0,
                     axis=1
                 )
@@ -316,4 +315,23 @@ with abas[3]:
                 ).properties(height=350)
                 st.altair_chart(chart, use_container_width=True)
                 st.dataframe(comp[['codigo', 'descricao', 'porte', 'porte_B', 'perc_var']], use_container_width=True)
-            else
+            else:
+                st.warning("Nenhuma coincidência encontrada.")
+
+# --- 5. EXPORTAR ---
+with abas[4]:
+    if st.button("Gerar Arquivo Excel", key="btn_export_xlsx"):
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            with get_connection() as con:
+                pd.read_sql("SELECT * FROM procedimentos", con).to_excel(writer, index=False)
+        st.download_button("Clique aqui para baixar", output.getvalue(), "cbhpm_export.xlsx", key="dl_btn")
+
+# --- 6. GERENCIAR ---
+with abas[5]:
+    if lista_versoes:
+        v_del = st.selectbox("Versão para Deletar", lista_versoes, key="v_del_aba")
+        if st.button("Confirmar Exclusão Definitiva"):
+            excluir_versao(v_del)
+            st.cache_data.clear()
+            st.rerun()
