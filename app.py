@@ -262,13 +262,6 @@ with abas[1]:
             res = buscar_dados(termo, v_selecionada, tipo)
             st.dataframe(res, use_container_width=True, hide_index=True)
 
-# --- 3. CALCULAR ---
-Para deixar a aba Calcular mais transparente para o auditor, vamos ajustar a interface para mostrar os "componentes" do preço antes de exibir o resultado final. Isso ajuda a conferir se os valores extraídos da tabela estão corretos.
-
-Aqui está o código atualizado para a aba Calcular:
-
-Python
-
 # --- 3. CALCULAR (DETALHADO) ---
 with abas[2]:
     if v_ativa:
@@ -277,13 +270,14 @@ with abas[2]:
         c1, c2 = st.columns([1, 2])
         cod_calc = c1.text_input("Código do Procedimento", key="in_calc")
         
-        # Inputs de valores de referência
+        # Inputs de valores de referência para o cálculo
         col_ref1, col_ref2, col_ref3 = st.columns(3)
         uco_ref = col_ref1.number_input("Valor da UCO (R$)", min_value=0.0, value=1.0, step=0.1)
         filme_ref = col_ref2.number_input("Valor do Filme (R$)", min_value=0.0, value=21.70, step=0.1)
         infla_ref = col_ref3.number_input("Ajuste/Deflator (%)", value=0.0, step=1.0)
         
-        if st.button("Calcular Total"):
+        if st.button("Calcular Total", key="btn_exec_calc"):
+            # Busca os dados no banco usando a função de busca que já temos
             res = buscar_dados(cod_calc, v_ativa, "Código")
             
             if not res.empty:
@@ -292,7 +286,7 @@ with abas[2]:
                 # Fator de ajuste (ex: 10% de acréscimo = 1.10)
                 fator = 1 + (infla_ref / 100)
                 
-                # Cálculos individuais
+                # Cálculos individuais dos componentes
                 v_porte = p['porte'] * fator
                 v_uco = (p['uco'] * uco_ref) * fator
                 v_filme = (p['filme'] * filme_ref) * fator
@@ -301,29 +295,25 @@ with abas[2]:
                 st.divider()
                 st.markdown(f"### Resultado para: **{p['descricao']}**")
                 
-                # Exibição dos componentes em colunas
-                m1, m2, m3, m4 = st.columns(4)
+                # Exibição dos componentes em colunas (Métricas)
+                m1, m2, m3 = st.columns(3)
                 
-                m1.metric("Valor Porte", f"R$ {v_porte:,.2f}")
-                m2.metric("Custo UCO", f"R$ {v_uco:,.2f}")
-                m3.metric("Custo Filme", f"R$ {v_filme:,.2f}")
+                m1.metric("Componente Porte", f"R$ {v_porte:,.2f}")
+                m2.metric("Componente UCO", f"R$ {v_uco:,.2f}")
+                m3.metric("Componente Filme", f"R$ {v_filme:,.2f}")
                 
-                # Destaque para o valor total
-                st.write("") # Espaçamento
+                # Destaque visual para o valor total final
+                st.write("") # Espaço em branco
                 st.success(f"## **Valor Total Calculado: R$ {total_geral:,.2f}**")
                 
-                # Detalhamento técnico opcional
-                with st.expander("Ver memória de cálculo"):
-                    st.write(f"- **Porte Base:** {p['porte']} unidades")
-                    st.write(f"- **UCO:** {p['uco']} unidades x R$ {uco_ref}")
-                    st.write(f"- **Filme:** {p['filme']} unidades x R$ {filme_ref}")
-                    if infla_ref != 0:
-                        st.write(f"- **Ajuste Aplicado:** {infla_ref}%")
+                # Tabela de referência rápida das unidades originais
+                st.info(f"Unidades originais: Porte: {p['porte']} | UCO: {p['uco']} | Filme: {p['filme']}")
+                
             else:
-                st.error("⚠️ Código não encontrado na versão selecionada.")
+                st.error("⚠️ Código não encontrado na versão selecionada. Verifique se o código está correto.")
     else:
-        st.warning("Selecione uma Tabela Ativa na barra lateral para calcular.")
-
+        st.warning("⚠️ Selecione uma Tabela Ativa na barra lateral antes de realizar cálculos.")
+        
 # --- 4. COMPARAR ---
 with abas[3]:
     if len(lista_v) >= 2:
