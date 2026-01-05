@@ -264,7 +264,8 @@ with abas[1]:
 
 # --- 3. CALCULAR (DETALHADO) ---
 with abas[2]:
-    if v_ativa:
+    # Verifique se o nome na sidebar é 'v_selecionada' ou 'v_ativa' e ajuste aqui:
+    if v_selecionada: 
         st.subheader("🧮 Calculadora de Honorários e Custos")
         
         c1, c2 = st.columns([1, 2])
@@ -277,8 +278,8 @@ with abas[2]:
         infla_ref = col_ref3.number_input("Ajuste/Deflator (%)", value=0.0, step=1.0)
         
         if st.button("Calcular Total", key="btn_exec_calc"):
-            # Busca os dados no banco usando a função de busca que já temos
-            res = buscar_dados(cod_calc, v_ativa, "Código")
+            # Busca os dados usando a versão selecionada na sidebar
+            res = buscar_dados(cod_calc, v_selecionada, "Código")
             
             if not res.empty:
                 p = res.iloc[0]
@@ -303,16 +304,16 @@ with abas[2]:
                 m3.metric("Componente Filme", f"R$ {v_filme:,.2f}")
                 
                 # Destaque visual para o valor total final
-                st.write("") # Espaço em branco
+                st.write("") 
                 st.success(f"## **Valor Total Calculado: R$ {total_geral:,.2f}**")
                 
                 # Tabela de referência rápida das unidades originais
-                st.info(f"Unidades originais: Porte: {p['porte']} | UCO: {p['uco']} | Filme: {p['filme']}")
+                st.info(f"Unidades originais desta tabela: Porte: {p['porte']} | UCO: {p['uco']} | Filme: {p['filme']}")
                 
             else:
-                st.error("⚠️ Código não encontrado na versão selecionada. Verifique se o código está correto.")
+                st.error("⚠️ Código não encontrado. Verifique se o código pertence à versão selecionada.")
     else:
-        st.warning("⚠️ Selecione uma Tabela Ativa na barra lateral antes de realizar cálculos.")
+        st.warning("⚠️ Selecione uma Tabela Ativa na barra lateral antes de calcular.")
         
 # --- 4. COMPARAR ---
 with abas[3]:
