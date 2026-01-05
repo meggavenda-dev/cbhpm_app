@@ -207,12 +207,17 @@ st.session_state.aba_ativa_idx = st.radio(
 # Esconde o radio
 st.markdown("<style>div[data-baseweb='radio']{display:none;}</style>", unsafe_allow_html=True)
 
-# Cria abas com base no radio
+# Cria as abas com Streamlit
 abas = st.tabs(abas_nome)
 
-# Abre a aba correta
-with abas[st.session_state.aba_ativa_idx]:
-    st.write("")  # nada aqui, só para “ativar” a aba
+# Radio invisível para controlar aba ativa
+st.session_state.aba_ativa_idx = st.radio(
+    label="",
+    options=list(range(len(abas_nome))),
+    index=st.session_state.aba_ativa_idx,
+    format_func=lambda i: abas_nome[i],
+    horizontal=True
+)
    
 # --- 1. IMPORTAR ---
 # --- 1. IMPORTAR (VERSÃO FINAL - VISUAL LIMPO) ---
