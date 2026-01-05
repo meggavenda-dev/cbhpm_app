@@ -297,6 +297,7 @@ with abas[2]:
             calcular_btn = st.form_submit_button("Calcular Agora")
 
         if calcular_btn:
+            st.session_state.aba_ativa_idx = 2  # mantém aba de cálculo
             if not cod_calc:
                 st.warning("Por favor, insira um código.")
             else:
