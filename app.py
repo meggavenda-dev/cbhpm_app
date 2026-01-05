@@ -256,13 +256,16 @@ abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comp
 
 # --- 1. IMPORTAR ---
 with abas[0]:
-    v_imp = st.text_input("Nome da Versão (ex: CBHPM 2024)", key="txt_v_imp_aba")
-    arqs = st.file_uploader("Upload arquivos", accept_multiple_files=True, key="file_up_imp_aba")
-    if st.button("Executar Importação", key="btn_importar_exec"):
+    v_imp = st.text_input("Nome da Versão (ex: CBHPM 2024)", key="txt_v_imp")
+    arqs = st.file_uploader("Upload arquivos", accept_multiple_files=True, key="file_up_imp")
+    if st.button("Executar Importação", key="btn_importar_final"):
         if importar(arqs, v_imp):
             st.success(f"Tabela '{v_imp}' importada!")
-            st.cache_data.clear()  
-            st.rerun() # Use o rerun atualizado
+            st.balloons()
+            st.cache_data.clear()  # limpa qualquer cache residual
+            
+            # Atualiza a lista de versões no estado da sessão
+            st.session_state.lista_versoes = versoes()
 
 # --- 2. CONSULTAR ---
 with abas[1]:
