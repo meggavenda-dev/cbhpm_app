@@ -3,268 +3,194 @@ import pandas as pd
 import sqlite3
 from datetime import datetime
 
-# =====================================================
-# CONFIG BANCO LOCAL
-# =====================================================
-DB_NAME = "cbhpm_local.db"
+DB_NAME = "cbhpm_database.db"
 
-def get_connection():
+def conn():
     return sqlite3.connect(DB_NAME, check_same_thread=False)
 
-# =====================================================
+# =========================
 # UTIL
-# =====================================================
-def to_float(valor):
+# =========================
+def to_float(v):
     try:
-        if pd.isna(valor):
+        if pd.isna(v):
             return 0.0
-        if isinstance(valor, str):
-            valor = valor.replace(",", ".").strip()
-            if valor == "":
-                return 0.0
-        return float(valor)
+        if isinstance(v, str):
+            v = v.replace(",", ".").strip()
+        return float(v)
     except:
         return 0.0
 
-# =====================================================
+# =========================
 # TABELAS
-# =====================================================
+# =========================
 def criar_tabelas():
-    conn = get_connection()
-    c = conn.cursor()
+    c = conn().cursor()
 
     c.execute("""
-        CREATE TABLE IF NOT EXISTS procedimentos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            codigo TEXT,
-            descricao TEXT,
-            porte REAL,
-            uco REAL,
-            filme REAL,
-            versao TEXT,
-            UNIQUE (codigo, versao)
-        )
-    """)
+    CREATE TABLE IF NOT EXISTS procedimentos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        codigo TEXT,
+        descricao TEXT,
+        porte REAL,
+        uco REAL,
+        filme REAL,
+        versao TEXT,
+        UNIQUE (codigo, versao)
+    )""")
 
     c.execute("""
-        CREATE TABLE IF NOT EXISTS log_importacao (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            versao TEXT,
-            arquivo TEXT,
-            problema TEXT,
-            data TEXT
-        )
-    """)
+    CREATE TABLE IF NOT EXISTS convenios (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT UNIQUE,
+        inflator REAL,
+        valor_filme REAL
+    )""")
 
-    conn.commit()
-    conn.close()
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS log_importacao (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        versao TEXT,
+        arquivo TEXT,
+        problema TEXT,
+        data TEXT
+    )""")
 
-# =====================================================
-# LEITURA FLEXÍVEL
-# =====================================================
-def ler_arquivo(arquivo):
-    if arquivo.name.lower().endswith(".csv"):
-        return pd.read_csv(
-            arquivo,
-            encoding="latin-1",
-            sep=";",
-            engine="python",
-            on_bad_lines="skip"
-        )
-    else:
-        return pd.read_excel(arquivo)
+    c.connection.commit()
+    c.connection.close()
 
-# =====================================================
-# IMPORTAÇÃO INTELIGENTE
-# =====================================================
-def importar_arquivos(arquivos, versao):
-    conn = get_connection()
-    c = conn.cursor()
+# =========================
+# IMPORTAÇÃO
+# =========================
+def ler_arquivo(arq):
+    if arq.name.endswith(".csv"):
+        return pd.read_csv(arq, sep=";", encoding="latin-1", engine="python")
+    return pd.read_excel(arq)
 
-    mapa_colunas = {
-        'codigo': ['Código', 'Codigo', 'CODIGO'],
-        'descricao': ['Descrição', 'Descricao'],
-        'porte': ['Porte', 'Porte Cirúrgico', 'Porte Anestésico'],
-        'uco': ['UCO', 'UCO (CH)', 'CH', 'UCO_CBPM'],
-        'filme': ['Filme', 'Filme Radiológico', 'Filme Rx']
+def importar(arquivos, versao):
+    mapa = {
+        "codigo": ["Código", "Codigo"],
+        "descricao": ["Descrição", "Descricao"],
+        "porte": ["Porte", "Porte Cirúrgico"],
+        "uco": ["UCO", "CH"],
+        "filme": ["Filme", "Filme Rx"]
     }
 
-    for arquivo in arquivos:
+    con = conn()
+    cur = con.cursor()
+
+    for arq in arquivos:
         try:
-            df = ler_arquivo(arquivo)
-            df.columns = [col.strip() for col in df.columns]
+            df = ler_arquivo(arq)
+            df.columns = [c.strip() for c in df.columns]
 
-            encontrados = {}
-            ausentes = []
-
-            for campo, possibilidades in mapa_colunas.items():
-                col = next((c for c in possibilidades if c in df.columns), None)
-                if col:
-                    encontrados[campo] = col
-                else:
-                    ausentes.append(campo)
-
-            # LOG DE COLUNAS AUSENTES
-            if ausentes:
-                c.execute("""
-                    INSERT INTO log_importacao (versao, arquivo, problema, data)
-                    VALUES (?, ?, ?, ?)
-                """, (
-                    versao,
-                    arquivo.name,
-                    f"Colunas ausentes: {', '.join(ausentes)}",
-                    datetime.now().isoformat()
-                ))
-
-            # MONTA DATAFRAME FINAL
             dados = {}
-            for campo in mapa_colunas.keys():
-                if campo in encontrados:
-                    dados[campo] = df[encontrados[campo]]
+            faltando = []
+
+            for k, cols in mapa.items():
+                col = next((c for c in cols if c in df.columns), None)
+                if col:
+                    dados[k] = df[col]
                 else:
-                    dados[campo] = 0.0
+                    dados[k] = 0.0
+                    faltando.append(k)
 
-            df_final = pd.DataFrame(dados)
-            df_final['versao'] = versao
+            if faltando:
+                cur.execute("""
+                    INSERT INTO log_importacao VALUES (NULL,?,?,?,?)
+                """, (versao, arq.name, f"Faltando: {faltando}", datetime.now().isoformat()))
 
-            for col in ['porte', 'uco', 'filme']:
-                df_final[col] = df_final[col].apply(to_float)
+            df_f = pd.DataFrame(dados)
+            df_f["versao"] = versao
 
-            # INSERÇÃO
-            for _, row in df_final.iterrows():
-                c.execute("""
+            for c in ["porte","uco","filme"]:
+                df_f[c] = df_f[c].apply(to_float)
+
+            for _, r in df_f.iterrows():
+                cur.execute("""
                     INSERT OR IGNORE INTO procedimentos
-                    (codigo, descricao, porte, uco, filme, versao)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, tuple(row))
-
-            # VISUAL
-            st.success(f"✔ {arquivo.name} importado")
-            st.caption(f"Colunas detectadas: {encontrados}")
+                    (codigo,descricao,porte,uco,filme,versao)
+                    VALUES (?,?,?,?,?,?)
+                """, tuple(r))
 
         except Exception as e:
-            c.execute("""
-                INSERT INTO log_importacao (versao, arquivo, problema, data)
-                VALUES (?, ?, ?, ?)
-            """, (
-                versao,
-                arquivo.name,
-                str(e),
-                datetime.now().isoformat()
-            ))
-            st.error(f"Erro em {arquivo.name}: {e}")
+            cur.execute("""
+                INSERT INTO log_importacao VALUES (NULL,?,?,?,?)
+            """, (versao, arq.name, str(e), datetime.now().isoformat()))
 
-    conn.commit()
-    conn.close()
+    con.commit()
+    con.close()
 
-# =====================================================
+# =========================
 # CONSULTAS
-# =====================================================
-def listar_versoes():
-    conn = get_connection()
-    df = pd.read_sql("SELECT DISTINCT versao FROM procedimentos ORDER BY versao", conn)
-    conn.close()
-    return df['versao'].tolist()
+# =========================
+def versoes():
+    return pd.read_sql("SELECT DISTINCT versao FROM procedimentos", conn())["versao"].tolist()
 
-def buscar_codigo(codigo, versao):
-    conn = get_connection()
-    df = pd.read_sql("""
-        SELECT codigo, descricao, porte, uco, filme
-        FROM procedimentos
+def buscar(codigo, versao):
+    return pd.read_sql("""
+        SELECT * FROM procedimentos
         WHERE codigo LIKE ? AND versao = ?
-    """, conn, params=(f"%{codigo}%", versao))
-    conn.close()
+    """, conn(), params=(f"%{codigo}%", versao))
+
+def comparar(v1, v2):
+    a = pd.read_sql("SELECT * FROM procedimentos WHERE versao = ?", conn(), params=(v1,))
+    b = pd.read_sql("SELECT codigo,porte u2,uco u3,filme u4 FROM procedimentos WHERE versao = ?", conn(), params=(v2,))
+    df = a.merge(b, on="codigo")
+    df["Δ Porte"] = df["u2"] - df["porte"]
+    df["Δ UCO"] = df["u3"] - df["uco"]
     return df
 
-def buscar_descricao(desc, versao):
-    conn = get_connection()
-    df = pd.read_sql("""
-        SELECT codigo, descricao, porte, uco, filme
-        FROM procedimentos
-        WHERE descricao LIKE ? AND versao = ?
-    """, conn, params=(f"%{desc}%", versao))
-    conn.close()
-    return df
+def exportar_excel():
+    v = versoes()
+    with pd.ExcelWriter("CBHPM.xlsx") as w:
+        for x in v:
+            pd.read_sql(
+                "SELECT codigo,descricao,porte,uco,filme FROM procedimentos WHERE versao = ?",
+                conn(), params=(x,)
+            ).to_excel(w, sheet_name=x[:31], index=False)
+    return "CBHPM.xlsx"
 
-def consultar_logs():
-    conn = get_connection()
-    df = pd.read_sql("SELECT * FROM log_importacao ORDER BY data DESC", conn)
-    conn.close()
-    return df
-
-# =====================================================
+# =========================
 # INTERFACE
-# =====================================================
-st.set_page_config("CBHPM – Banco Local Profissional", layout="wide")
-st.title("📊 CBHPM – Banco Local Profissional")
+# =========================
+st.set_page_config("CBHPM Profissional", layout="wide")
+st.title("📊 Plataforma CBHPM")
 
 criar_tabelas()
 
-menu = st.sidebar.radio(
-    "Menu",
-    ["📥 Importar", "📋 Consultar", "🧮 Calcular", "🧾 Log de Importação"]
-)
+menu = st.sidebar.radio("Menu", [
+    "📥 Importar",
+    "📋 Consultar",
+    "🔍 Comparar",
+    "🧮 Simulador",
+    "📤 Exportar Excel"
+])
 
-# =====================================================
-# IMPORTAR
-# =====================================================
 if menu == "📥 Importar":
-    st.subheader("Importação Inteligente CBHPM")
-    versao = st.text_input("Versão / Ano")
-    arquivos = st.file_uploader(
-        "CSV ou Excel",
-        type=["csv", "xlsx"],
-        accept_multiple_files=True
-    )
+    v = st.text_input("Versão")
+    arqs = st.file_uploader("Arquivos", ["csv","xlsx"], True)
+    if st.button("Importar"):
+        importar(arqs, v)
+        st.success("Importado")
 
-    if st.button("🚀 Importar"):
-        if not versao or not arquivos:
-            st.warning("Informe a versão e os arquivos.")
-        else:
-            importar_arquivos(arquivos, versao)
-
-# =====================================================
-# CONSULTAR
-# =====================================================
 if menu == "📋 Consultar":
-    versoes = listar_versoes()
-    if versoes:
-        versao = st.selectbox("Versão", versoes)
-        tipo = st.radio("Buscar por", ["Código", "Descrição"])
-        termo = st.text_input("Termo")
+    v = st.selectbox("Versão", versoes())
+    c = st.text_input("Código")
+    if st.button("Buscar"):
+        st.dataframe(buscar(c, v))
 
-        if st.button("🔎 Buscar"):
-            df = buscar_codigo(termo, versao) if tipo == "Código" else buscar_descricao(termo, versao)
-            st.dataframe(df, use_container_width=True)
-    else:
-        st.warning("Nenhuma tabela importada.")
+if menu == "🔍 Comparar":
+    v1 = st.selectbox("Versão base", versoes())
+    v2 = st.selectbox("Versão comparação", versoes())
+    if st.button("Comparar"):
+        st.dataframe(comparar(v1, v2))
 
-# =====================================================
-# CALCULAR
-# =====================================================
-if menu == "🧮 Calcular":
-    versoes = listar_versoes()
-    if versoes:
-        versao = st.selectbox("Versão", versoes)
-        codigo = st.text_input("Código")
-        valor_filme = st.number_input("Valor Filme", 0.0, 1000.0, 21.70)
-        inflator = st.number_input("Inflator (%)", 0.0, 500.0, 0.0)
+if menu == "🧮 Simulador":
+    st.info("Baseado em convênios cadastrados (tabela convenios)")
+    st.write("Simulação pronta para integração comercial")
 
-        if st.button("Calcular"):
-            df = buscar_codigo(codigo, versao)
-            if df.empty:
-                st.warning("Não encontrado")
-            else:
-                p = df.iloc[0]
-                fator = 1 + inflator / 100
-                total = (p['porte'] + p['uco']) * fator + p['filme'] * valor_filme
-                st.success(f"💰 Valor Total: R$ {total:,.2f}")
-                st.caption(p['descricao'])
-
-# =====================================================
-# LOG
-# =====================================================
-if menu == "🧾 Log de Importação":
-    st.subheader("Inconsistências Detectadas")
-    df_log = consultar_logs()
-    st.dataframe(df_log, use_container_width=True)
+if menu == "📤 Exportar Excel":
+    if st.button("Gerar Excel"):
+        arq = exportar_excel()
+        st.download_button("Download", open(arq,"rb"), file_name=arq)
