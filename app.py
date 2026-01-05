@@ -1,15 +1,15 @@
-import streamlit as st
-import pandas as pd
-import sqlite3
-from datetime import datetime
 import os
-import requests
 import base64
 import hashlib
 from io import BytesIO
 from contextlib import contextmanager
-import time
+from datetime import datetime
+
+import pandas as pd
+import requests
+import sqlite3
 import altair as alt
+import streamlit as st
 
 # =====================================================
 # CONFIGURAÇÕES E ESTADO DA SESSÃO
@@ -17,35 +17,38 @@ import altair as alt
 DB_NAME = "data/cbhpm_database.db"
 os.makedirs("data", exist_ok=True)
 
-# Inicializa estados para persistência
+# Inicializa estado
 if 'comparacao_realizada' not in st.session_state:
     st.session_state.comparacao_realizada = False
 
 # =====================================================
-# CONEXÃO E LIMPEZA (Context Manager)
+# CONEXÃO COM SQLITE (cacheada)
 # =====================================================
+@st.cache_resource
+def get_connection():
+    return sqlite3.connect(DB_NAME, check_same_thread=False, timeout=20)
+
 @contextmanager
 def gerenciar_db():
-    con = sqlite3.connect(DB_NAME, check_same_thread=False, timeout=20)
+    con = get_connection()
     try:
         yield con
         con.commit()
     except Exception as e:
         con.rollback()
         raise e
-    finally:
-        con.close()
 
 # =====================================================
 # UTILITÁRIOS
 # =====================================================
 def to_float(v):
+    if pd.isna(v) or v == "":
+        return 0.0
+    if isinstance(v, str):
+        v = v.replace(".", "").replace(",", ".").strip()
     try:
-        if pd.isna(v) or v == "": return 0.0
-        if isinstance(v, str):
-            v = v.replace(".", "").replace(",", ".").strip()
         return float(v)
-    except:
+    except ValueError:
         return 0.0
 
 def gerar_hash_arquivo(uploaded_file):
@@ -54,16 +57,35 @@ def gerar_hash_arquivo(uploaded_file):
     uploaded_file.seek(0)
     return h
 
+def extrair_valor(row, df, col_opts):
+    for c in col_opts:
+        if c in df.columns:
+            return to_float(row[c])
+    return 0.0
+
 # =====================================================
 # GITHUB – PERSISTÊNCIA
 # =====================================================
+def github_request(method, url, **kwargs):
+    headers = {
+        "Authorization": f"token {st.secrets['GITHUB_TOKEN']}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    try:
+        r = requests.request(method, url, headers=headers, **kwargs)
+        r.raise_for_status()
+        return r
+    except requests.HTTPError as e:
+        st.error(f"Erro GitHub: {e}")
+        return None
+
 def baixar_banco():
-    if os.path.exists(DB_NAME): return
+    if os.path.exists(DB_NAME):
+        return
     try:
         url = f"https://api.github.com/repos/{st.secrets['GITHUB_REPO']}/contents/{DB_NAME}"
-        headers = {"Authorization": f"token {st.secrets['GITHUB_TOKEN']}", "Accept": "application/vnd.github.v3+json"}
-        r = requests.get(url, headers=headers)
-        if r.status_code == 200:
+        r = github_request("GET", url)
+        if r and r.status_code == 200:
             content = r.json()["content"]
             with open(DB_NAME, "wb") as f:
                 f.write(base64.b64decode(content))
@@ -77,26 +99,44 @@ def salvar_banco_github(msg):
         with open(DB_NAME, "rb") as f:
             content = base64.b64encode(f.read()).decode()
         api_url = f"https://api.github.com/repos/{st.secrets['GITHUB_REPO']}/contents/{DB_NAME}"
-        headers = {"Authorization": f"token {st.secrets['GITHUB_TOKEN']}", "Accept": "application/vnd.github.v3+json"}
-        r = requests.get(api_url, headers=headers)
-        sha = r.json().get("sha") if r.status_code == 200 else None
+        r = github_request("GET", api_url)
+        sha = r.json().get("sha") if r and r.status_code == 200 else None
         payload = {"message": msg, "content": content, "branch": st.secrets["GITHUB_BRANCH"]}
-        if sha: payload["sha"] = sha
-        requests.put(api_url, headers=headers, json=payload)
+        if sha:
+            payload["sha"] = sha
+        github_request("PUT", api_url, json=payload)
     except:
-        st.warning("Erro na sincronização GitHub.")
+        st.warning("Erro na sincronização com GitHub.")
 
 # =====================================================
-# OPERAÇÕES DE BANCO DE DADOS
+# BANCO DE DADOS
 # =====================================================
 def criar_tabelas():
     with gerenciar_db() as con:
         cur = con.cursor()
-        cur.execute("CREATE TABLE IF NOT EXISTS procedimentos (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, descricao TEXT, porte REAL, uco REAL, filme REAL, versao TEXT, UNIQUE (codigo, versao))")
-        cur.execute("CREATE TABLE IF NOT EXISTS arquivos_importados (id INTEGER PRIMARY KEY AUTOINCREMENT, hash TEXT UNIQUE, versao TEXT, data TEXT)")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS procedimentos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                codigo TEXT,
+                descricao TEXT,
+                porte REAL,
+                uco REAL,
+                filme REAL,
+                versao TEXT,
+                UNIQUE (codigo, versao)
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS arquivos_importados (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hash TEXT UNIQUE,
+                versao TEXT,
+                data TEXT
+            )
+        """)
 
 def arquivo_ja_importado(h):
-    with sqlite3.connect(DB_NAME) as con:
+    with get_connection() as con:
         cur = con.cursor()
         cur.execute("SELECT 1 FROM arquivos_importados WHERE hash=?", (h,))
         return cur.fetchone() is not None
@@ -122,7 +162,15 @@ def importar(arquivos, versao):
     if not versao:
         st.error("Por favor, informe a Versão CBHPM.")
         return False
-    mapa = {"codigo": ["Código", "Codigo"], "descricao": ["Descrição", "Descricao"], "porte": ["Porte"], "uco": ["UCO", "CH"], "filme": ["Filme"]}
+
+    mapa = {
+        "codigo": ["Código", "Codigo"],
+        "descricao": ["Descrição", "Descricao"],
+        "porte": ["Porte"],
+        "uco": ["UCO", "CH"],
+        "filme": ["Filme"]
+    }
+
     arquivos_processados = 0
     with gerenciar_db() as con:
         cur = con.cursor()
@@ -131,18 +179,31 @@ def importar(arquivos, versao):
             if arquivo_ja_importado(h):
                 st.warning(f"O conteúdo de '{arq.name}' já foi importado.")
                 continue
+
             df = pd.read_csv(arq, sep=";", encoding="utf-8") if arq.name.lower().endswith(".csv") else pd.read_excel(arq)
             df.columns = [c.strip() for c in df.columns]
+
             dados_lista = []
             for _, row in df.iterrows():
-                d = {campo: to_float(row[next((c for c in cols if c in df.columns), None)]) if next((c for c in cols if c in df.columns), None) else 0.0 for campo, cols in mapa.items()}
-                dados_lista.append((str(row[next((c for c in mapa["codigo"] if c in df.columns))]), str(row[next((c for c in mapa["descricao"] if c in df.columns))]), d["porte"], d["uco"], d["filme"], versao))
-            cur.executemany("INSERT OR IGNORE INTO procedimentos (codigo, descricao, porte, uco, filme, versao) VALUES (?, ?, ?, ?, ?, ?)", dados_lista)
-            cur.execute("INSERT OR IGNORE INTO arquivos_importados (hash, versao, data) VALUES (?, ?, ?)", (h, versao, datetime.now().isoformat()))
+                d = {campo: extrair_valor(row, df, cols) for campo, cols in mapa.items()}
+                codigo = str(row[next((c for c in mapa["codigo"] if c in df.columns))])
+                descricao = str(row[next((c for c in mapa["descricao"] if c in df.columns))])
+                dados_lista.append((codigo, descricao, d["porte"], d["uco"], d["filme"], versao))
+
+            cur.executemany(
+                "INSERT OR IGNORE INTO procedimentos (codigo, descricao, porte, uco, filme, versao) VALUES (?, ?, ?, ?, ?, ?)",
+                dados_lista
+            )
+            cur.execute(
+                "INSERT OR IGNORE INTO arquivos_importados (hash, versao, data) VALUES (?, ?, ?)",
+                (h, versao, datetime.now().isoformat())
+            )
             arquivos_processados += 1
+
     if arquivos_processados > 0:
         salvar_banco_github(f"Importação {versao}")
         return True
+
     return False
 
 # =====================================================
@@ -150,17 +211,23 @@ def importar(arquivos, versao):
 # =====================================================
 @st.cache_data
 def versoes():
-    with sqlite3.connect(DB_NAME) as con:
-        try: return pd.read_sql("SELECT DISTINCT versao FROM procedimentos ORDER BY versao", con)["versao"].tolist()
-        except: return []
+    with get_connection() as con:
+        try:
+            return pd.read_sql("SELECT DISTINCT versao FROM procedimentos ORDER BY versao", con)["versao"].tolist()
+        except:
+            return []
 
 def buscar_dados(termo, versao, tipo):
     campo = "codigo" if tipo == "Código" else "descricao"
-    with sqlite3.connect(DB_NAME) as con:
-        return pd.read_sql(f"SELECT codigo, descricao, porte, uco, filme FROM procedimentos WHERE {campo} LIKE ? AND versao = ?", con, params=(f"%{termo}%", versao))
+    with get_connection() as con:
+        return pd.read_sql(
+            f"SELECT codigo, descricao, porte, uco, filme FROM procedimentos WHERE {campo} LIKE ? AND versao = ?",
+            con,
+            params=(f"%{termo}%", versao)
+        )
 
 # =====================================================
-# INTERFACE PRINCIPAL
+# INTERFACE STREAMLIT
 # =====================================================
 baixar_banco()
 criar_tabelas()
@@ -170,20 +237,17 @@ st.title("CBHPM • Gestão Inteligente")
 
 lista_versoes = versoes()
 v_selecionada = st.sidebar.selectbox("Tabela CBHPM Ativa", lista_versoes, key="v_global") if lista_versoes else None
-
-# O SEGREDO: Definir uma 'key' para st.tabs faz o Streamlit gerenciar a aba ativa automaticamente
 abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"])
 
 # --- 1. IMPORTAR ---
 with abas[0]:
-    v_imp = st.text_input("Nome da Versão (ex: CBHPM 2024)", key="txt_v_imp")
-    arqs = st.file_uploader("Upload arquivos", accept_multiple_files=True, key="file_up_imp")
+    versao_importacao = st.text_input("Nome da Versão (ex: CBHPM 2024)", key="txt_v_imp")
+    arquivos = st.file_uploader("Upload arquivos", accept_multiple_files=True, key="file_up_imp")
     if st.button("Executar Importação", key="btn_importar_final"):
-        if importar(arqs, v_imp):
-            st.success(f"Tabela '{v_imp}' importada!")
+        if importar(arquivos, versao_importacao):
+            st.success(f"Tabela '{versao_importacao}' importada!")
             st.balloons()
             st.cache_data.clear()
-            # REMOVIDO: st.rerun() daqui evita o pulo. O Streamlit atualizará os componentes necessários.
 
 # --- 2. CONSULTAR ---
 with abas[1]:
@@ -215,9 +279,10 @@ with abas[2]:
 with abas[3]:
     if len(lista_versoes) >= 2:
         col_v1, col_v2 = st.columns(2)
-        # on_change limpa o estado apenas se você mudar a seleção, sem forçar pulo de aba
-        va = col_v1.selectbox("Base (Antiga)", lista_versoes, key="va_comp", on_change=lambda: st.session_state.update({"comparacao_realizada": False}))
-        vb = col_v2.selectbox("Comparação (Nova)", lista_versoes, key="vb_comp", on_change=lambda: st.session_state.update({"comparacao_realizada": False}))
+        va = col_v1.selectbox("Base (Antiga)", lista_versoes, key="va_comp",
+                              on_change=lambda: st.session_state.update({"comparacao_realizada": False}))
+        vb = col_v2.selectbox("Comparação (Nova)", lista_versoes, key="vb_comp",
+                              on_change=lambda: st.session_state.update({"comparacao_realizada": False}))
         
         if st.button("Analisar Diferenças", key="btn_analisar_comp"):
             st.session_state.comparacao_realizada = True
@@ -225,50 +290,29 @@ with abas[3]:
         if st.session_state.comparacao_realizada:
             dfa = buscar_dados("", va, "Código")
             dfb = buscar_dados("", vb, "Código").rename(columns={
-                "porte": "porte_B", 
-                "uco": "uco_B", 
+                "porte": "porte_B",
+                "uco": "uco_B",
                 "filme": "filme_B",
                 "descricao": "descricao_B"
             })
-            
             comp = dfa.merge(dfb, on="codigo")
-            
             if not comp.empty:
-                comp['perc_var'] = ((comp['porte_B'] - comp['porte']) / comp['porte'].replace(0, 1)) * 100
-                
+                comp['perc_var'] = comp.apply(
+                    lambda row: ((row['porte_B'] - row['porte']) / row['porte'] * 100) if row['porte'] else 0,
+                    axis=1
+                )
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Itens em Comum", len(comp))
                 m2.metric("Variação Média", f"{comp['perc_var'].mean():.2f}%")
                 m3.metric("Com Aumento", len(comp[comp['perc_var'] > 0]))
-
+                
                 comp['Grupo'] = comp['codigo'].astype(str).str[:2]
                 resumo = comp.groupby('Grupo')['perc_var'].mean().reset_index()
-                
                 chart = alt.Chart(resumo).mark_bar().encode(
                     x=alt.X('Grupo:N', sort='-y', title="Grupo"),
                     y=alt.Y('perc_var:Q', title="Variação %"),
                     color=alt.condition(alt.datum.perc_var > 0, alt.value('steelblue'), alt.value('orange'))
                 ).properties(height=350)
-                
                 st.altair_chart(chart, use_container_width=True)
                 st.dataframe(comp[['codigo', 'descricao', 'porte', 'porte_B', 'perc_var']], use_container_width=True)
-            else:
-                st.warning("Não há códigos comuns para comparar.")
-
-# --- 5. EXPORTAR ---
-with abas[4]:
-    if st.button("Gerar Arquivo", key="btn_exportar_xlsx"):
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            with sqlite3.connect(DB_NAME) as con:
-                pd.read_sql("SELECT * FROM procedimentos", con).to_excel(writer, index=False)
-        st.download_button("Baixar Excel", output.getvalue(), "cbhpm.xlsx", key="dl_btn")
-
-# --- 6. GERENCIAR ---
-with abas[5]:
-    if lista_versoes:
-        v_del = st.selectbox("Versão para Deletar", lista_versoes, key="v_del_aba_gerenciar")
-        if st.button("Confirmar Exclusão", key="btn_deletar_versao"):
-            excluir_versao(v_del)
-            st.cache_data.clear()
-            st.rerun() # Aqui o rerun é aceitável pois a lista lateral PRECISA atualizar
+            else
