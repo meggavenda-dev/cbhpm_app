@@ -142,7 +142,7 @@ def excluir_versao(versao):
         con.close()
 
 # =====================================================
-# IMPORTAÇÃO
+# IMPORTAÇÃO (CORREÇÃO DE ENCODING AQUI)
 # =====================================================
 def importar(arquivos, versao):
     mapa = {
@@ -159,7 +159,15 @@ def importar(arquivos, versao):
     for arq in arquivos:
         h = gerar_hash_arquivo(arq)
 
-        df = pd.read_excel(arq) if not arq.name.endswith(".csv") else pd.read_csv(arq, sep=";")
+        if arq.name.lower().endswith(".csv"):
+            try:
+                df = pd.read_csv(arq, sep=";", encoding="utf-8")
+            except UnicodeDecodeError:
+                arq.seek(0)
+                df = pd.read_csv(arq, sep=";", encoding="latin1")
+        else:
+            df = pd.read_excel(arq)
+
         df.columns = [c.strip() for c in df.columns]
 
         dados = {}
