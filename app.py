@@ -1,3 +1,4 @@
+
 # CBHPM Gestão Inteligente - App Streamlit com melhorias profissionais
 import os
 import base64
@@ -16,12 +17,12 @@ import altair as alt
 import streamlit as st
 
 # =====================================================
-# CONFIGURAÇÕES & TEMA
+# CONFIGURAÇÕES & ESTADO
 # =====================================================
 DB_NAME = "data/cbhpm_database.db"
 os.makedirs("data", exist_ok=True)
 
-# Configuração de página (preferível logo no início)
+# Configuração de página
 st.set_page_config(page_title="CBHPM Gestão Inteligente", layout="wide")
 st.title("⚖️ CBHPM • Auditoria e Gestão")
 
@@ -31,7 +32,7 @@ UCO_DEFAULT = float(st.secrets.get("UCO_VALOR", 1.00))
 # Estados iniciais
 if "comparacao_realizada" not in st.session_state:
     st.session_state.comparacao_realizada = False
-# Aba preferida (controla índice do radio). Começa em "📋 Consultar".
+# Aba inicial preferida: Consultar
 if "aba_pref" not in st.session_state:
     st.session_state.aba_pref = "📋 Consultar"
 
@@ -151,7 +152,7 @@ def read_csv_smart(file) -> pd.DataFrame:
     return pd.read_csv(BytesIO(content), sep=";", encoding="latin-1")
 
 # =====================================================
-# GITHUB – PERSISTÊNCIA (com timeout/backoff)
+# GITHUB – PERSISTÊNCIA (timeout + backoff)
 # =====================================================
 def _request_with_retry(method: str, url: str, headers=None, json=None, params=None, retries: int = 3, timeout: int = 20):
     """Requests com retry/backoff para maior robustez."""
@@ -273,7 +274,10 @@ def importar(arquivos: list, versao: str) -> bool:
                     elif arq.name.lower().endswith(".xls"):
                         df = pd.read_excel(arq, engine="xlrd")
                     else:  # .xlsx
-                        df = pd.read_excel(arq, engine="openpyxl")
+                        try:
+                            df = pd.read_excel(arq, engine="openpyxl")
+                        except Exception:
+                            df = pd.read_excel(arq)  # fallback
                 except Exception as e:
                     st.error(f"Erro ao ler {arq.name}: {e}")
                     prog.progress(min(idx / total_arqs, 1.0), text=f"Arquivo {idx}/{total_arqs} (erro de leitura)")
@@ -368,20 +372,19 @@ def show_dataframe_paginated(df: pd.DataFrame, page_size: int = 200) -> None:
     st.dataframe(df.iloc[s:e], use_container_width=True, hide_index=True)
 
 # =====================================================
-# INICIALIZAÇÃO
-# =====================================================
-baixar_banco()
-criar_tabelas()
-
-# =====================================================
-# TEMA GLOBAL (CSS)
+# TEMA GLOBAL (CSS) — sem “barra branca” de aparência de input
 # =====================================================
 st.markdown("""
 <style>
 :root{
   --primary:#1E88E5; --primary-700:#1b78ca;
-  --success:#10B981; --warning:#F59E0B; --error:#EF4444;
-  --text:#111827; --muted:#6B7280; --bg:#F7FAFC; --white:#ffffff; --border:#E5E7EB;
+  --success:#10B981; --success-700:#0f946f;
+  --warning:#F59E0B; --error:#EF4444;
+  --text:#111827; --muted:#6B7280;
+  --bg:#F7FAFC; --white:#ffffff; --border:#E5E7EB;
+  --primary-tint:#EEF6FF;  /* informativo, não-input */
+  --success-tint:#ECFDF5;
+  --neutral-tint:#F3F4F6;
 }
 html, body, [data-testid="stAppViewContainer"]{
   background: var(--bg); color: var(--text);
@@ -390,38 +393,78 @@ html, body, [data-testid="stAppViewContainer"]{
 h1, h2, h3 { letter-spacing: .2px; }
 h1 { font-weight: 800; }
 h2 { font-weight: 700; }
+
+/* Cards informativos */
 .card {
-  background: var(--white); border-radius: 12px; padding: 18px; border: 1px solid var(--border);
-  box-shadow: 0 2px 10px rgba(17,24,39,.06); margin-bottom: 16px;
+  background: var(--white);
+  border-radius: 12px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 10px rgba(17,24,39,.06);
+  margin-bottom: 16px;
 }
+
+/* Card do procedimento */
 .res-card {
-  padding: 16px 18px; border-radius: 12px; background-color: var(--white);
-  border-left: 6px solid var(--primary); box-shadow: 0 2px 10px rgba(17,24,39,.06); margin: 8px 0 18px 0;
+  padding: 16px 18px; border-radius: 12px;
+  background-color: var(--neutral-tint);
+  border-left: 6px solid var(--primary);
+  box-shadow: 0 2px 10px rgba(17,24,39,.06); margin: 8px 0 18px 0;
 }
 .res-card small { color: var(--muted); }
-[data-testid="stMetricValue"] { font-size: 1.9rem; color: var(--primary); font-weight: 800; }
+
+/* Banner informativo (para TOTAL) – não parece input */
+.info-banner {
+  display:flex; align-items:center; gap:12px;
+  padding: 12px 16px; border-radius: 10px;
+  background: var(--primary-tint);
+  border: 1px solid #DBEAFE;
+  box-shadow: 0 1px 6px rgba(17,24,39,.04);
+}
+.info-banner .icon {
+  width: 28px; height:28px;
+  display:flex; align-items:center; justify-content:center;
+  border-radius: 999px;
+  background:#DBEAFE; color:#1E88E5; font-weight:700;
+}
+.info-banner .label { font-weight:700; letter-spacing:.2px; color:var(--text); }
+.info-banner .value { margin-left:auto; font-size:1.5rem; font-weight:800; color:var(--primary); }
+
+/* Métricas */
+[data-testid="stMetricValue"] { font-size: 1.85rem; color: var(--primary); font-weight: 800; }
 [data-testid="stMetricLabel"] { color: var(--muted); font-weight: 600; letter-spacing: .2px; }
+
+/* Botões */
 .stButton>button {
   background: var(--primary)!important; color: #fff!important; border-radius: 10px!important;
   border: 1px solid var(--primary-700)!important; padding: .55rem .9rem!important;
 }
 .stButton>button:hover { filter: brightness(1.06); }
+
+/* Inputs – parecem inputs em foco */
 .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"]>div {
   border-radius: 10px; border: 1px solid var(--border);
+  background: #fff;
 }
-.stRadio [role="radiogroup"] { gap: .5rem; }
+.stTextInput input:focus, .stNumberInput input:focus,
+.stSelectbox div[data-baseweb="select"]>div:focus-within {
+  outline: none; border-color: #9AC3F9;
+  box-shadow: 0 0 0 3px rgba(30,136,229,.15);
+}
+
+/* Sidebar */
 [data-testid="stSidebar"] { background: #ffffff; border-right: 1px solid var(--border); }
-.total-strip {
-  display:flex; align-items:center; justify-content:space-between; padding: 12px 16px; border-radius: 10px;
-  background: #ffffff; border:1px solid var(--border); box-shadow: 0 2px 10px rgba(17,24,39,.05);
-}
-.total-strip .label { font-weight:700; color:var(--text); letter-spacing:.2px; }
-.total-strip .value { font-size:1.6rem; color:var(--success); font-weight:800; }
+
+/* Badges */
 .badge {
   display:inline-block; padding:4px 8px; border-radius:999px; font-size:.75rem;
   border:1px solid var(--border); background:#fff; color:var(--muted); margin-right:6px;
 }
+
+/* Dataframe */
 .stDataFrame { border-radius: 10px; overflow: hidden; }
+
+/* Tipos pequenos */
 small.note { color: var(--muted); font-size: .85rem; }
 </style>
 """, unsafe_allow_html=True)
@@ -458,7 +501,7 @@ if aba_atual == "📥 Importar":
             st.markdown('<div class="card">', unsafe_allow_html=True)
             with st.form("form_importacao", clear_on_submit=True):
                 v_imp_input = st.text_input("Nome da Versão (ex: CBHPM 2024)")
-                arqs_input = st.file_uploader("Upload arquivos (CSV ou Excel)", accept_multiple_files=True)
+                arqs_input = st.file_uploader("Upload arquivos (CSV ou Excel)", type=["csv","xls","xlsx"], accept_multiple_files=True)
                 submitted = st.form_submit_button("🚀 Iniciar Importação Agora")
             st.markdown('</div>', unsafe_allow_html=True)
             if submitted:
@@ -489,7 +532,7 @@ if aba_atual == "📥 Importar":
                     st.rerun()
 
 # =====================================================
-# 2) CONSULTAR  (Botão de pesquisa + Paginação + Download)
+# 2) CONSULTAR (Botão de pesquisa + Paginação + Download)
 # =====================================================
 if aba_atual == "📋 Consultar":
     lista_v = versoes()
@@ -524,7 +567,7 @@ if aba_atual == "📋 Consultar":
         st.warning("Nenhuma versão disponível. Importe dados na aba '📥 Importar'.")
 
 # =====================================================
-# 3) CALCULAR  (Reativo; checkboxes; métrica UCO; faixa TOTAL)
+# 3) CALCULAR (Reativo; checkboxes; métrica UCO; banner TOTAL)
 # =====================================================
 if aba_atual == "🧮 Calcular":
     lista_v = versoes()
@@ -571,11 +614,11 @@ if aba_atual == "🧮 Calcular":
                 filme_calc = p['filme'] * filme_v * f_filme
                 total = porte_calc + uco_calc + filme_calc
 
-                # Card do procedimento
+                # Card do procedimento (neutro, não-input)
                 st.markdown(f"""
                     <div class="res-card">
                         <small>Versão ativa: <b>{v_selecionada}</b></small><br>
-                        <span style='font-size: 1.05rem; font-weight: 600;'>{p['descricao']}</span><br>
+                        <span style='font-size: 1.05rem; font-weight: 600;'>🧾 {p['descricao']}</span><br>
                         <small class="note">Código {cod_calc}</small>
                     </div>
                 """, unsafe_allow_html=True)
@@ -586,10 +629,10 @@ if aba_atual == "🧮 Calcular":
                 c_uco_box.metric("UCO", moeda_br(uco_calc))
                 c_filme.metric("Filme", moeda_br(filme_calc))
 
-                # Faixa TOTAL
-                houve_ajuste = (infla != 0) and (aplicar_porte or aplicar_uco or aplicar_filme)
+                # Banner TOTAL (não parece input)
                 st.markdown(f"""
-                    <div class="total-strip" style="border-left:6px solid var(--success); margin-top: 4px;">
+                    <div class="info-banner">
+                        <div class="icon">Σ</div>
                         <div class="label">TOTAL FINAL</div>
                         <div class="value">{moeda_br(total)}</div>
                     </div>
@@ -600,6 +643,7 @@ if aba_atual == "🧮 Calcular":
                 if aplicar_porte: comps.append("Porte")
                 if aplicar_uco:   comps.append("UCO")
                 if aplicar_filme: comps.append("Filme")
+                houve_ajuste = (infla != 0) and (aplicar_porte or aplicar_uco or aplicar_filme)
                 if houve_ajuste:
                     st.markdown("".join([f"<span class='badge'>{c}</span>" for c in comps]), unsafe_allow_html=True)
                     st.caption(f"🧮 Ajuste de {infla:.2f}% aplicado nos componentes marcados.")
@@ -611,7 +655,7 @@ if aba_atual == "🧮 Calcular":
         st.warning("Nenhuma versão disponível. Importe dados na aba '📥 Importar'.")
 
 # =====================================================
-# 4) COMPARAR  (tratamento porte==0, média+mediana)
+# 4) COMPARAR (porte==0 → NaN; média/mediana; gráfico)
 # =====================================================
 if aba_atual == "⚖️ Comparar":
     lista_v = versoes()
@@ -667,7 +711,7 @@ if aba_atual == "⚖️ Comparar":
         st.warning("Necessário ao menos 2 versões para comparar. Importe mais dados na aba '📥 Importar'.")
 
 # =====================================================
-# 5) EXPORTAR  (autoajuste colunas)
+# 5) EXPORTAR (autoajuste colunas)
 # =====================================================
 if aba_atual == "📤 Exportar":
     lista_v = versoes()
@@ -721,7 +765,7 @@ if aba_atual == "🗑️ Gerenciar":
                 st.cache_data.clear()
                 st.success("Versão removida!")
                 time.sleep(1)
-                # Após remoção, forçamos voltar para Consultar
+                # Após remoção, voltar para Consultar
                 st.session_state.aba_pref = "📋 Consultar"
                 st.rerun()
             else:
