@@ -196,7 +196,10 @@ abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comp
 with abas[0]:
     st.subheader("Carregar Novos Dados")
 
-    with st.form("form_importacao"):
+    # Placeholder para mensagens persistentes
+    msg_container = st.container()
+
+    with st.form("form_importacao", clear_on_submit=True):
         v_imp = st.text_input("Nome da Versão (ex: CBHPM 2024)")
         arqs = st.file_uploader("Upload arquivos (CSV ou Excel)", accept_multiple_files=True)
         submitted = st.form_submit_button("🚀 Iniciar Importação Agora")
@@ -207,13 +210,25 @@ with abas[0]:
             elif not arqs:
                 st.warning("Nenhum arquivo selecionado.")
             else:
-                with st.spinner("Processando dados e sincronizando..."):
-                    if importar(arqs, v_imp):
-                        st.success("Importação concluída com sucesso!")
-                        st.cache_data.clear()
-                        st.session_state.lista_versoes = versoes()
-                        time.sleep(1)
-                        st.rerun()
+                # A barra de progresso agora aparecerá aqui dentro da função importar
+                if importar(arqs, v_imp):
+                    # 1. Notificação flutuante (Toast) que sobrevive ao início do rerun
+                    st.toast(f"Tabela {v_imp} processada!", icon="✅")
+                    
+                    # 2. Mensagem de sucesso dentro do container para destaque
+                    st.success("✅ Importação concluída com sucesso! Atualizando sistema...")
+                    
+                    # 3. Limpeza e atualização de estado
+                    st.cache_data.clear()
+                    st.session_state.lista_versoes = versoes()
+                    
+                    # 4. Aguarda um pouco mais para o usuário ver a mensagem (2 segundos)
+                    time.sleep(2)
+                    
+                    # 5. Reinicia para atualizar a sidebar e outras abas
+                    st.rerun()
+                else:
+                    st.error("Erro durante a importação. Verifique os arquivos.")
 
 # --- 2. CONSULTAR ---
 with abas[1]:
