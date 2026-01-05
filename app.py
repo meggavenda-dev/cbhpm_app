@@ -467,8 +467,9 @@ if aba_atual == "📋 Consultar":
 
 
 
+
 # =====================================================
-# 3) CALCULAR  (UCO automático; mantém métrica de UCO no resultado)
+# 3) CALCULAR  (UCO automático; manter métrica UCO; ajuste com escopo)
 # =====================================================
 if aba_atual == "🧮 Calcular":
     lista_v = versoes()
@@ -498,6 +499,14 @@ if aba_atual == "🧮 Calcular":
             cod_calc = col_cod.text_input("Código do Procedimento", placeholder="Ex: 10101012", key="in_calc")
             infla = col_ajuste.number_input("Ajuste Adicional (%)", 0.0, step=0.5, key="in_infla")
 
+            # Escopo do ajuste adicional: onde aplicar o percentual informado
+            aplicar_em = st.radio(
+                "Aplicar ajuste em",
+                ["Somente Porte", "Porte e UCO", "Porte, UCO e Filme"],
+                horizontal=False,
+                help="Escolha sobre quais componentes o ajuste percentual será aplicado."
+            )
+
             # Mantém apenas o input de Filme
             filme_v = st.number_input("Valor Filme (R$)", 21.70, step=0.01, format="%.2f", key="in_filme_val")
 
@@ -510,14 +519,24 @@ if aba_atual == "🧮 Calcular":
                 res = buscar_dados(cod_calc, v_selecionada, "Código")
                 if not res.empty:
                     p = res.iloc[0]
-                    f = 1 + (infla/100)
 
-                    porte_calc = p['porte'] * f
-                    # UCO calculado automaticamente (mantemos a métrica no resultado)
-                    uco_calc = p['uco'] * UCO_VALOR_APLICADO * f
-                    filme_calc = p['filme'] * filme_v * f
+                    # Flags de aplicação do ajuste
+                    aplica_porte = aplicar_em in ("Somente Porte", "Porte e UCO", "Porte, UCO e Filme")
+                    aplica_uco   = aplicar_em in ("Porte e UCO", "Porte, UCO e Filme")
+                    aplica_filme = aplicar_em == "Porte, UCO e Filme"
+
+                    # Fatores por componente
+                    f_porte = (1 + infla/100) if (aplica_porte and infla != 0) else 1.0
+                    f_uco   = (1 + infla/100) if (aplica_uco   and infla != 0) else 1.0
+                    f_filme = (1 + infla/100) if (aplica_filme and infla != 0) else 1.0
+
+                    # Cálculos
+                    porte_calc = p['porte'] * f_porte
+                    uco_calc   = p['uco']   * UCO_VALOR_APLICADO * f_uco
+                    filme_calc = p['filme'] * filme_v * f_filme
                     total = porte_calc + uco_calc + filme_calc
 
+                    # Resultado visual
                     st.markdown(f"""
                         <div class="res-card">
                             <small>Procedimento encontrado em <b>{v_selecionada}</b></small><br>
@@ -530,13 +549,28 @@ if aba_atual == "🧮 Calcular":
                     c_porte.metric("Porte", f"R$ {porte_calc:,.2f}")
                     c_uco.metric("UCO", f"R$ {uco_calc:,.2f}")
                     c_filme.metric("Filme", f"R$ {filme_calc:,.2f}")
-                    c_total.metric("TOTAL FINAL", f"R$ {total:,.2f}", delta=f"{infla:.2f}%" if infla != 0 else None)
+                    c_total.metric(
+                        "TOTAL FINAL",
+                        f"R$ {total:,.2f}",
+                        delta=f"{infla:.2f}%"
+                        if (infla != 0 and aplicar_em in ["Somente Porte", "Porte e UCO", "Porte, UCO e Filme"])
+                        else None
+                    )
+
+                    # Feedback do escopo aplicado (opcional)
+                    escopo_txt = {
+                        "Somente Porte": "Ajuste aplicado somente sobre o Porte.",
+                        "Porte e UCO": "Ajuste aplicado sobre Porte e UCO.",
+                        "Porte, UCO e Filme": "Ajuste aplicado sobre Porte, UCO e Filme."
+                    }[aplicar_em]
+                    st.caption(f"ℹ️ {escopo_txt}")
 
                     st.divider()
                 else:
                     st.error(f"O código '{cod_calc}' não foi encontrado na tabela {v_selecionada}.")
     else:
         st.warning("Nenhuma versão disponível. Importe dados na aba '📥 Importar'.")
+
 
 # =====================================================
 # 4) COMPARAR  (tratamento porte==0, média+mediana)
