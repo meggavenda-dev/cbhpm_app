@@ -1,3 +1,4 @@
+
 import os
 import base64
 import hashlib
@@ -21,8 +22,10 @@ os.makedirs("data", exist_ok=True)
 # Estados iniciais
 if 'comparacao_realizada' not in st.session_state:
     st.session_state.comparacao_realizada = False
-if 'aba_ativa' not in st.session_state:
-    st.session_state.aba_ativa = "📥 Importar"
+
+# Aba inicial: Consultar (evita pular para Importar)
+if "aba_atual" not in st.session_state:
+    st.session_state.aba_atual = "📋 Consultar"
 
 # =====================================================
 # CONEXÃO E BANCO DE DADOS
@@ -72,11 +75,14 @@ def criar_tabelas():
 # UTILITÁRIOS
 # =====================================================
 def to_float(v):
-    if pd.isna(v) or v == "": return 0.0
+    if pd.isna(v) or v == "": 
+        return 0.0
     if isinstance(v, str):
         v = v.replace(".", "").replace(",", ".").strip()
-    try: return float(v)
-    except: return 0.0
+    try:
+        return float(v)
+    except:
+        return 0.0
 
 def gerar_hash_arquivo(uploaded_file):
     uploaded_file.seek(0)
@@ -86,37 +92,68 @@ def gerar_hash_arquivo(uploaded_file):
 
 def extrair_valor(row, df, col_opts):
     for c in col_opts:
-        if c in df.columns: return to_float(row[c])
+        if c in df.columns:
+            return to_float(row[c])
     return 0.0
 
 # =====================================================
 # GITHUB – PERSISTÊNCIA
 # =====================================================
 def baixar_banco():
-    if os.path.exists(DB_NAME): return
+    # Se já existe local, não baixa
+    if os.path.exists(DB_NAME):
+        return
     try:
-        url = f"https://api.github.com/repos/{st.secrets['GITHUB_REPO']}/contents/{DB_NAME}"
-        headers = {"Authorization": f"token {st.secrets['GITHUB_TOKEN']}", "Accept": "application/vnd.github.v3+json"}
+        repo = st.secrets.get('GITHUB_REPO')
+        token = st.secrets.get('GITHUB_TOKEN')
+        if not repo or not token:
+            # Cria um DB vazio caso não tenha secrets
+            open(DB_NAME, "wb").close()
+            return
+        url = f"https://api.github.com/repos/{repo}/contents/{DB_NAME}"
+        headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
         r = requests.get(url, headers=headers)
         if r.status_code == 200:
             content = r.json()["content"]
             with open(DB_NAME, "wb") as f:
                 f.write(base64.b64decode(content))
-        else: open(DB_NAME, "wb").close()
-    except: pass
+        else:
+            open(DB_NAME, "wb").close()
+    except Exception:
+        # Em qualquer falha, garante um DB local
+        open(DB_NAME, "wb").close()
 
 def salvar_banco_github(msg):
     try:
+        repo = st.secrets.get('GITHUB_REPO')
+        token = st.secrets.get('GITHUB_TOKEN')
+        branch = st.secrets.get('GITHUB_BRANCH', 'main')
+        if not repo or not token:
+            # Sem secrets, apenas não sincroniza
+            st.warning("Sincronização com GitHub indisponível (verifique secrets).")
+            return
+
         with open(DB_NAME, "rb") as f:
             content = base64.b64encode(f.read()).decode()
-        api_url = f"https://api.github.com/repos/{st.secrets['GITHUB_REPO']}/contents/{DB_NAME}"
-        headers = {"Authorization": f"token {st.secrets['GITHUB_TOKEN']}", "Accept": "application/vnd.github.v3+json"}
+
+        api_url = f"https://api.github.com/repos/{repo}/contents/{DB_NAME}"
+        headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
         r = requests.get(api_url, headers=headers)
         sha = r.json().get("sha") if r.status_code == 200 else None
-        payload = {"message": msg, "content": content, "branch": st.secrets["GITHUB_BRANCH"]}
-        if sha: payload["sha"] = sha
-        requests.put(api_url, headers=headers, json=payload)
-    except: st.warning("Erro na sincronização com GitHub.")
+        payload = {"message": msg, "content": content, "branch": branch}
+        if sha:
+            payload["sha"] = sha
+        put_r = requests.put(api_url, headers=headers, json=payload)
+        if put_r.status_code not in (200, 201):
+            st.warning("Erro na sincronização com GitHub (status {}).".format(put_r.status_code))
+    except Exception:
+        st.warning("Erro na sincronização com GitHub.")
 
 # =====================================================
 # LÓGICA DE NEGÓCIO
@@ -125,8 +162,14 @@ def importar(arquivos, versao):
     if not versao:
         st.error("Informe a Versão CBHPM.")
         return False
-    mapa = {"codigo": ["Código", "Codigo"], "descricao": ["Descrição", "Descricao"], 
-            "porte": ["Porte"], "uco": ["UCO", "CH"], "filme": ["Filme"]}
+
+    mapa = {
+        "codigo": ["Código", "Codigo"],
+        "descricao": ["Descrição", "Descricao"],
+        "porte": ["Porte"],
+        "uco": ["UCO", "CH"],
+        "filme": ["Filme"]
+    }
     
     arquivos_processados = 0
     with gerenciar_db() as con:
@@ -138,27 +181,45 @@ def importar(arquivos, versao):
                 st.warning(f"O arquivo '{arq.name}' já foi importado anteriormente.")
                 continue
 
+            # Tenta ler CSV/Excel com fallback de encoding
             try:
                 if arq.name.lower().endswith(".csv"):
-                    try: df = pd.read_csv(arq, sep=";", encoding="utf-8")
-                    except: 
+                    try:
+                        df = pd.read_csv(arq, sep=";", encoding="utf-8")
+                    except Exception:
                         arq.seek(0)
                         df = pd.read_csv(arq, sep=";", encoding="latin-1")
-                else: df = pd.read_excel(arq)
+                else:
+                    df = pd.read_excel(arq)
             except Exception as e:
                 st.error(f"Erro ao ler {arq.name}: {e}")
                 continue
 
             df.columns = [c.strip() for c in df.columns]
             dados_lista = []
+
+            # Valida presença de colunas de código e descrição
+            cod_col = next((c for c in mapa["codigo"] if c in df.columns), None)
+            desc_col = next((c for c in mapa["descricao"] if c in df.columns), None)
+            if cod_col is None or desc_col is None:
+                st.error(f"Arquivo {arq.name} não contém colunas de Código/Descrição esperadas.")
+                continue
+
             for _, row in df.iterrows():
                 d = {campo: extrair_valor(row, df, cols) for campo, cols in mapa.items()}
-                cod = str(row[next((c for c in mapa["codigo"] if c in df.columns))])
-                desc = str(row[next((c for c in mapa["descricao"] if c in df.columns))])
+                cod = str(row[cod_col]).strip()
+                desc = str(row[desc_col]).strip()
                 dados_lista.append((cod, desc, d["porte"], d["uco"], d["filme"], versao))
 
-            cur.executemany("INSERT OR IGNORE INTO procedimentos (codigo, descricao, porte, uco, filme, versao) VALUES (?, ?, ?, ?, ?, ?)", dados_lista)
-            cur.execute("INSERT OR IGNORE INTO arquivos_importados (hash, versao, data) VALUES (?, ?, ?)", (h, versao, datetime.now().isoformat()))
+            cur.executemany("""
+                INSERT OR IGNORE INTO procedimentos (codigo, descricao, porte, uco, filme, versao)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, dados_lista)
+
+            cur.execute("""
+                INSERT OR IGNORE INTO arquivos_importados (hash, versao, data)
+                VALUES (?, ?, ?)
+            """, (h, versao, datetime.now().isoformat()))
             arquivos_processados += 1
 
     if arquivos_processados > 0:
@@ -169,17 +230,21 @@ def importar(arquivos, versao):
 @st.cache_data
 def versoes():
     with get_connection() as con:
-        try: return pd.read_sql("SELECT DISTINCT versao FROM procedimentos ORDER BY versao", con)["versao"].tolist()
-        except: return []
+        try:
+            return pd.read_sql("SELECT DISTINCT versao FROM procedimentos ORDER BY versao", con)["versao"].tolist()
+        except Exception:
+            return []
 
 def buscar_dados(termo, versao, tipo):
     campo = "codigo" if tipo == "Código" else "descricao"
     with get_connection() as con:
-        return pd.read_sql(f"SELECT codigo, descricao, porte, uco, filme FROM procedimentos WHERE {campo} LIKE ? AND versao = ?", 
-                           con, params=(f"%{termo}%", versao))
+        return pd.read_sql(
+            f"SELECT codigo, descricao, porte, uco, filme FROM procedimentos WHERE {campo} LIKE ? AND versao = ?",
+            con, params=(f"%{termo}%", versao)
+        )
 
 # =====================================================
-# INTERFACE STREAMLIT
+# INICIALIZAÇÃO
 # =====================================================
 baixar_banco()
 criar_tabelas()
@@ -187,19 +252,25 @@ criar_tabelas()
 st.set_page_config(page_title="CBHPM Gestão Inteligente", layout="wide")
 st.title("⚖️ CBHPM • Auditoria e Gestão")
 
-lista_v = versoes()
-v_selecionada = st.sidebar.selectbox("Tabela Ativa", lista_v, key="v_global") if lista_v else None
+# =====================================================
+# NAVEGAÇÃO (Sidebar)
+# =====================================================
+opcoes = ["📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar", "📥 Importar"]
 
-abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"])
+aba_atual = st.sidebar.radio(
+    "Navegação",
+    opcoes,
+    index=opcoes.index(st.session_state.aba_atual),
+    key="aba_atual"
+)
 
-# --- 1. IMPORTAR ---
-# --- 1. IMPORTAR (VERSÃO FINAL - VISUAL LIMPO) ---
-# --- 1. IMPORTAR (VERSÃO CORRIGIDA - SEM TELA BRANCA) ---
-# --- 1. IMPORTAR (RESOLVIDO: SEM NAMEERROR E SEM TELA BRANCA) ---
-with abas[0]:
+# =====================================================
+# 1) IMPORTAR
+# =====================================================
+if aba_atual == "📥 Importar":
     st.subheader("Carregar Novos Dados")
 
-    # Inicializa variáveis de controle no estado da sessão
+    # Variáveis de controle no estado da sessão
     if "processando" not in st.session_state:
         st.session_state.processando = False
     if "temp_v_imp" not in st.session_state:
@@ -226,7 +297,7 @@ with abas[0]:
                         st.session_state.temp_v_imp = v_imp_input
                         st.session_state.temp_arqs = arqs_input
                         st.session_state.processando = True
-                        st.rerun() # Reinicia para trocar a tela
+                        st.rerun()  # Reinicia para trocar a tela
     else:
         # EXIBE O STATUS DE PROCESSAMENTO (O formulário sumiu)
         with area_dinamica.container():
@@ -239,11 +310,13 @@ with abas[0]:
                 
                 # Limpa o cache e as variáveis temporárias
                 st.cache_data.clear()
-                st.session_state.lista_versoes = versoes()
                 st.session_state.processando = False
                 st.session_state.temp_arqs = None
-                
-                time.sleep(2)
+                st.session_state.temp_v_imp = ""
+
+                # Após importar, vá para Consultar por padrão
+                st.session_state.aba_atual = "📋 Consultar"
+                time.sleep(1)
                 st.rerun()
             else:
                 st.error("Erro crítico na importação.")
@@ -251,22 +324,34 @@ with abas[0]:
                     st.session_state.processando = False
                     st.rerun()
 
-# --- 2. CONSULTAR ---
-with abas[1]:
+# =====================================================
+# 2) CONSULTAR
+# =====================================================
+if aba_atual == "📋 Consultar":
+    lista_v = versoes()
+    v_selecionada = st.sidebar.selectbox("Tabela Ativa", lista_v, key="v_global_consulta") if lista_v else None
+
     if v_selecionada:
         st.info(f"Pesquisando na Versão: {v_selecionada}")
         c1, c2 = st.columns([1, 3])
         tipo = c1.radio("Busca por", ["Código", "Descrição"], horizontal=True)
         termo = c2.text_input("Digite o termo de busca...")
+
         if termo:
             res = buscar_dados(termo, v_selecionada, tipo)
             st.dataframe(res, use_container_width=True, hide_index=True)
+        else:
+            st.caption("Digite um termo de busca para visualizar resultados.")
+    else:
+        st.warning("Nenhuma versão disponível. Importe dados na aba '📥 Importar'.")
 
-# --- 3. CALCULAR ---
-# Guarda a aba ativa
-st.session_state.aba_ativa = 2  # índice da aba de cálculo
+# =====================================================
+# 3) CALCULAR
+# =====================================================
+if aba_atual == "🧮 Calcular":
+    lista_v = versoes()
+    v_selecionada = st.sidebar.selectbox("Tabela Ativa", lista_v, key="v_global_calc") if lista_v else None
 
-with abas[2]:
     if v_selecionada:
         st.subheader("🧮 Calculadora de Honorários CBHPM")
         
@@ -297,7 +382,6 @@ with abas[2]:
             calcular_btn = st.form_submit_button("Calcular Agora")
 
         if calcular_btn:
-            st.session_state.aba_ativa_idx = 2  # mantém aba de cálculo
             if not cod_calc:
                 st.warning("Por favor, insira um código.")
             else:
@@ -326,12 +410,16 @@ with abas[2]:
                     c_total.metric("TOTAL FINAL", f"R$ {total:,.2f}", delta=f"{infla:.2f}%" if infla != 0 else None)
                     
                     st.divider()
-
                 else:
                     st.error(f"O código '{cod_calc}' não foi encontrado na tabela {v_selecionada}.")
-        
-# --- 4. COMPARAR ---
-with abas[3]:
+    else:
+        st.warning("Nenhuma versão disponível. Importe dados na aba '📥 Importar'.")
+
+# =====================================================
+# 4) COMPARAR
+# =====================================================
+if aba_atual == "⚖️ Comparar":
+    lista_v = versoes()
     if len(lista_v) >= 2:
         col1, col2 = st.columns(2)
         v1 = col1.selectbox("Versão Anterior", lista_v, key="v1")
@@ -342,10 +430,13 @@ with abas[3]:
         
         if st.session_state.comparacao_realizada:
             df1 = buscar_dados("", v1, "Código")
-            df2 = buscar_dados("", v2, "Código").rename(columns={"porte":"porte_2", "uco":"uco_2", "filme":"filme_2", "descricao":"desc_2"})
+            df2 = buscar_dados("", v2, "Código").rename(
+                columns={"porte":"porte_2", "uco":"uco_2", "filme":"filme_2", "descricao":"desc_2"}
+            )
             comp = df1.merge(df2, on="codigo")
             
             if not comp.empty:
+                # Evita inf/NaN forçando denom 1 onde porte=0 (mantendo sua lógica original)
                 comp['var_porte'] = ((comp['porte_2'] - comp['porte']) / comp['porte'].replace(0,1)) * 100
                 
                 # Resumo das Métricas
@@ -354,7 +445,7 @@ with abas[3]:
                 m2.metric("Variação Média Porte", f"{comp['var_porte'].mean():.2f}%")
                 m3.metric("Itens com Aumento", len(comp[comp['var_porte'] > 0]))
 
-                # Gráfico
+                # Gráfico por capítulo (2 primeiros dígitos)
                 resumo = comp.groupby(comp['codigo'].str[:2])['var_porte'].mean().reset_index()
                 chart = alt.Chart(resumo).mark_bar().encode(
                     x=alt.X('codigo:N', title="Grupo (Capítulo)"),
@@ -363,23 +454,37 @@ with abas[3]:
                 ).properties(height=350)
                 st.altair_chart(chart, use_container_width=True)
 
-                st.dataframe(comp[['codigo', 'descricao', 'porte', 'porte_2', 'var_porte']], 
-                             use_container_width=True, hide_index=True,
-                             column_config={"var_porte": st.column_config.NumberColumn("Variação %", format="%.2f%%")})
-    else: st.warning("Necessário ao menos 2 versões para comparar.")
+                st.dataframe(
+                    comp[['codigo', 'descricao', 'porte', 'porte_2', 'var_porte']], 
+                    use_container_width=True, hide_index=True,
+                    column_config={"var_porte": st.column_config.NumberColumn("Variação %", format="%.2f%%")}
+                )
+            else:
+                st.info("Nenhum item comum entre as versões selecionadas.")
+    else:
+        st.warning("Necessário ao menos 2 versões para comparar. Importe mais dados na aba '📥 Importar'.")
 
-# --- 5. EXPORTAR ---
-with abas[4]:
+# =====================================================
+# 5) EXPORTAR
+# =====================================================
+if aba_atual == "📤 Exportar":
+    lista_v = versoes()
     if lista_v:
         if st.button("📦 Gerar Backup Completo (Excel)"):
             output = BytesIO()
             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
                 with get_connection() as con:
-                    pd.read_sql("SELECT * FROM procedimentos", con).to_excel(writer, index=False)
+                    pd.read_sql("SELECT * FROM procedimentos", con).to_excel(writer, index=False, sheet_name="procedimentos")
+                    pd.read_sql("SELECT * FROM arquivos_importados", con).to_excel(writer, index=False, sheet_name="arquivos_importados")
             st.download_button("📥 Baixar Arquivo", output.getvalue(), "cbhpm_completa.xlsx")
+    else:
+        st.warning("Nenhuma versão disponível para exportar. Importe dados na aba '📥 Importar'.")
 
-# --- 6. GERENCIAR ---
-with abas[5]:
+# =====================================================
+# 6) GERENCIAR
+# =====================================================
+if aba_atual == "🗑️ Gerenciar":
+    lista_v = versoes()
     if lista_v:
         v_del = st.selectbox("Versão para Exclusão", lista_v)
         confirmar = st.checkbox("Confirmo a exclusão definitiva desta versão e sincronização com GitHub.")
@@ -393,3 +498,7 @@ with abas[5]:
                 st.success("Versão removida!")
                 time.sleep(1)
                 st.rerun()
+            else:
+                st.info("Marque a confirmação para prosseguir.")
+    else:
+        st.warning("Nenhuma versão disponível para gerenciar. Importe dados na aba '📥 Importar'.")
