@@ -18,19 +18,13 @@ import streamlit as st
 DB_NAME = "data/cbhpm_database.db"
 os.makedirs("data", exist_ok=True)
 
-# --- INICIALIZAÇÃO DE ESTADO ---
-if 'lista_versoes' not in st.session_state:
-    # Tenta carregar as versões do banco ou inicia vazio
-    try:
-        st.session_state.lista_versoes = carregar_versoes_db()
-    except:
-        st.session_state.lista_versoes = []
-
+   
+# Estados iniciais
 if 'comparacao_realizada' not in st.session_state:
     st.session_state.comparacao_realizada = False
-
-if 'aba_ativa' not in st.session_state:
-    st.session_state.aba_ativa = 0
+    
+if 'aba_ativa_idx' not in st.session_state:
+    st.session_state.aba_ativa_idx = 0  # primeira aba = Importar
 
 # =====================================================
 # CONEXÃO E BANCO DE DADOS
@@ -201,6 +195,9 @@ v_selecionada = st.sidebar.selectbox("Tabela Ativa", lista_v, key="v_global") if
 # Criar as abas com uma chave (key) para persistência
 
 abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"])
+
+# Força a aba ativa correta
+abas[st.session_state.aba_ativa_idx]
 
 # --- 1. IMPORTAR ---
 # --- 1. IMPORTAR (VERSÃO FINAL - VISUAL LIMPO) ---
