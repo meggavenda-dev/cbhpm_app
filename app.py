@@ -10,7 +10,9 @@ import base64
 # =====================================================
 # CONFIG
 # =====================================================
-DB_NAME = "cbhpm_database.db"
+DB_NAME = "data/cbhpm_database.db"
+
+os.makedirs("data", exist_ok=True)
 
 # =====================================================
 # GITHUB – PERSISTÊNCIA (GAMBIARRA CONTROLADA)
@@ -19,16 +21,18 @@ def baixar_banco():
     if os.path.exists(DB_NAME):
         return
 
-    url = f"https://raw.githubusercontent.com/{st.secrets['GITHUB_REPO']}/{st.secrets['GITHUB_BRANCH']}/data/{DB_NAME}"
+    url = f"https://api.github.com/repos/{st.secrets['GITHUB_REPO']}/contents/{DB_NAME}"
+    headers = {
+        "Authorization": f"token {st.secrets['GITHUB_TOKEN']}",
+        "Accept": "application/vnd.github.v3+json"
+    }
 
-    r = requests.get(
-        url,
-        headers={"Authorization": f"token {st.secrets['GITHUB_TOKEN']}"}
-    )
+    r = requests.get(url, headers=headers)
 
     if r.status_code == 200:
+        content = r.json()["content"]
         with open(DB_NAME, "wb") as f:
-            f.write(r.content)
+            f.write(base64.b64decode(content))
     else:
         open(DB_NAME, "wb").close()
 
@@ -36,15 +40,14 @@ def salvar_banco_github(msg="Atualização automática do banco CBHPM"):
     with open(DB_NAME, "rb") as f:
         content = base64.b64encode(f.read()).decode()
 
-    api_url = f"https://api.github.com/repos/{st.secrets['GITHUB_REPO']}/contents/data/{DB_NAME}"
-
+    api_url = f"https://api.github.com/repos/{st.secrets['GITHUB_REPO']}/contents/{DB_NAME}"
     headers = {
         "Authorization": f"token {st.secrets['GITHUB_TOKEN']}",
         "Accept": "application/vnd.github.v3+json"
     }
 
     r = requests.get(api_url, headers=headers)
-    sha = r.json().get("sha") if r.status_code == 200 else None
+    sha = r.json()["sha"] if r.status_code == 200 else None
 
     payload = {
         "message": msg,
@@ -55,7 +58,10 @@ def salvar_banco_github(msg="Atualização automática do banco CBHPM"):
     if sha:
         payload["sha"] = sha
 
-    requests.put(api_url, headers=headers, json=payload)
+    r2 = requests.put(api_url, headers=headers, json=payload)
+
+    if r2.status_code not in (200, 201):
+        st.error(f"Erro ao salvar no GitHub: {r2.status_code} - {r2.text}")
 
 # ⬇️ baixa o banco ANTES de tudo
 baixar_banco()
