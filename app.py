@@ -265,13 +265,20 @@ with abas[1]:
 # --- 3. CALCULAR ---
 with abas[2]:
     if v_selecionada:
+        st.subheader("Calculadora de Honorários CBHPM")
+        
         cod_calc = st.text_input("Código do Procedimento", key="in_calc")
         col1, col2, col3 = st.columns(3)
         uco_v = col1.number_input("Valor UCO (R$)", 1.0, step=0.1)
         filme_v = col2.number_input("Valor Filme (R$)", 21.70, step=0.1)
         infla = col3.number_input("Ajuste Adicional (%)", 0.0)
-        
-        if st.button("Calcular Honorários"):
+
+        calcular_btn = st.button("Calcular Honorários")
+
+        # Container separado para resultados
+        resultado_area = st.container()
+
+        if calcular_btn:
             res = buscar_dados(cod_calc, v_selecionada, "Código")
             if not res.empty:
                 p = res.iloc[0]
@@ -282,14 +289,14 @@ with abas[2]:
                 filme_calc = p['filme'] * filme_v * f
                 total = porte_calc + uco_calc + filme_calc
 
-                # Exibir valores detalhados
-                st.metric("Porte", f"R$ {porte_calc:,.2f}")
-                st.metric("UCO", f"R$ {uco_calc:,.2f}")
-                st.metric("Filme", f"R$ {filme_calc:,.2f}")
-                st.markdown("---")
-                st.metric(f"Total: {p['descricao']}", f"R$ {total:,.2f}")
+                # Exibir tudo em colunas na mesma linha
+                c_porte, c_uco, c_filme, c_total = resultado_area.columns(4)
+                c_porte.metric("Porte", f"R$ {porte_calc:,.2f}")
+                c_uco.metric("UCO", f"R$ {uco_calc:,.2f}")
+                c_filme.metric("Filme", f"R$ {filme_calc:,.2f}")
+                c_total.metric("Total", f"R$ {total:,.2f}", delta=f"{infla:.2f}%")
             else:
-                st.error("Código não encontrado.")
+                resultado_area.error("Código não encontrado.")
         
 # --- 4. COMPARAR ---
 with abas[3]:
