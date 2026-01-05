@@ -195,48 +195,58 @@ abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comp
 # --- 1. IMPORTAR ---
 # --- 1. IMPORTAR (VERSÃO FINAL - VISUAL LIMPO) ---
 # --- 1. IMPORTAR (VERSÃO CORRIGIDA - SEM TELA BRANCA) ---
+# --- 1. IMPORTAR (RESOLVIDO: SEM NAMEERROR E SEM TELA BRANCA) ---
 with abas[0]:
     st.subheader("Carregar Novos Dados")
 
-    # Criamos o container que será alternado
-    area_importacao = st.empty()
-
-    # Usamos uma variável de controle no session_state para saber se estamos importando
+    # Inicializa variáveis de controle no estado da sessão
     if "processando" not in st.session_state:
         st.session_state.processando = False
+    if "temp_v_imp" not in st.session_state:
+        st.session_state.temp_v_imp = ""
+    if "temp_arqs" not in st.session_state:
+        st.session_state.temp_arqs = None
+
+    # Espaço dinâmico (Placeholder)
+    area_dinamica = st.empty()
 
     if not st.session_state.processando:
-        # CONTEÚDO 1: O FORMULÁRIO
-        with area_importacao.container():
+        # EXIBE O FORMULÁRIO
+        with area_dinamica.container():
             with st.form("form_importacao", clear_on_submit=True):
-                v_imp = st.text_input("Nome da Versão (ex: CBHPM 2024)")
-                arqs = st.file_uploader("Upload arquivos (CSV ou Excel)", accept_multiple_files=True)
+                v_imp_input = st.text_input("Nome da Versão (ex: CBHPM 2024)")
+                arqs_input = st.file_uploader("Upload arquivos (CSV ou Excel)", accept_multiple_files=True)
                 submitted = st.form_submit_button("🚀 Iniciar Importação Agora")
                 
                 if submitted:
-                    if not v_imp or not arqs:
-                        st.error("Preencha o nome da versão e selecione ao menos um arquivo.")
+                    if not v_imp_input or not arqs_input:
+                        st.error("Preencha o nome da versão e selecione os arquivos.")
                     else:
+                        # SALVA NO ESTADO DA SESSÃO PARA O PRÓXIMO CICLO
+                        st.session_state.temp_v_imp = v_imp_input
+                        st.session_state.temp_arqs = arqs_input
                         st.session_state.processando = True
-                        st.rerun() # Reinicia para trocar a tela imediatamente
+                        st.rerun() # Reinicia para trocar a tela
     else:
-        # CONTEÚDO 2: O STATUS DE PROCESSAMENTO (Substitui o formulário)
-        with area_importacao.container():
-            st.info("### ⚙️ Processando Informações")
-            # A barra de progresso e as mensagens de status aparecem aqui
-            if importar(arqs, v_imp):
-                st.toast(f"Tabela {v_imp} processada!", icon="✅")
-                st.success("✅ Importação concluída com sucesso! Atualizando sistema...")
+        # EXIBE O STATUS DE PROCESSAMENTO (O formulário sumiu)
+        with area_dinamica.container():
+            st.info(f"⚙️ Processando: **{st.session_state.temp_v_imp}**")
+            
+            # Chamamos a função usando os dados salvos no session_state
+            if importar(st.session_state.temp_arqs, st.session_state.temp_v_imp):
+                st.toast("Dados processados com sucesso!", icon="✅")
+                st.success("✅ Importação concluída! O sistema será atualizado.")
                 
-                # Resetamos o estado e atualizamos dados
+                # Limpa o cache e as variáveis temporárias
                 st.cache_data.clear()
                 st.session_state.lista_versoes = versoes()
                 st.session_state.processando = False
+                st.session_state.temp_arqs = None
                 
                 time.sleep(2)
                 st.rerun()
             else:
-                st.error("Erro na importação.")
+                st.error("Erro crítico na importação.")
                 if st.button("Tentar Novamente"):
                     st.session_state.processando = False
                     st.rerun()
