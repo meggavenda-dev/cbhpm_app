@@ -17,7 +17,10 @@ import altair as alt
 DB_NAME = "data/cbhpm_database.db"
 os.makedirs("data", exist_ok=True)
 
-# Inicializa estados para persistência
+# --- CORREÇÃO 1: Inicializar estado da aba ativa ---
+if "aba_ativa" not in st.session_state:
+    st.session_state.aba_ativa = 0
+
 if 'comparacao_realizada' not in st.session_state:
     st.session_state.comparacao_realizada = False
 
@@ -171,11 +174,13 @@ st.title("CBHPM • Gestão Inteligente")
 lista_versoes = versoes()
 v_selecionada = st.sidebar.selectbox("Tabela CBHPM Ativa", lista_versoes, key="v_global") if lista_versoes else None
 
-# O SEGREDO: Definir uma 'key' para st.tabs faz o Streamlit gerenciar a aba ativa automaticamente
-abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"])
+# --- CORREÇÃO 2: Substituir linha do st.tabs para ancorar índice ---
+abas_nome = ["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"]
+abas = st.tabs(abas_nome)
 
 # --- 1. IMPORTAR ---
 with abas[0]:
+    st.session_state.aba_ativa = 0 # CORREÇÃO 3: Registrar aba ativa
     v_imp = st.text_input("Nome da Versão (ex: CBHPM 2024)", key="txt_v_imp")
     arqs = st.file_uploader("Upload arquivos", accept_multiple_files=True, key="file_up_imp")
     if st.button("Executar Importação", key="btn_importar_final"):
@@ -183,10 +188,10 @@ with abas[0]:
             st.success(f"Tabela '{v_imp}' importada!")
             st.balloons()
             st.cache_data.clear()
-            # REMOVIDO: st.rerun() daqui evita o pulo. O Streamlit atualizará os componentes necessários.
 
 # --- 2. CONSULTAR ---
 with abas[1]:
+    st.session_state.aba_ativa = 1 # CORREÇÃO 3
     if v_selecionada:
         st.info(f"Versão Ativa na Sidebar: {v_selecionada}")
         c1, c2 = st.columns([1, 3])
@@ -197,6 +202,7 @@ with abas[1]:
 
 # --- 3. CALCULAR ---
 with abas[2]:
+    st.session_state.aba_ativa = 2 # CORREÇÃO 3
     if v_selecionada:
         cod_calc = st.text_input("Código", key="input_cod_calc")
         col1, col2, col3 = st.columns(3)
@@ -213,9 +219,9 @@ with abas[2]:
 
 # --- 4. COMPARAR ---
 with abas[3]:
+    st.session_state.aba_ativa = 3 # CORREÇÃO 3
     if len(lista_versoes) >= 2:
         col_v1, col_v2 = st.columns(2)
-        # on_change limpa o estado apenas se você mudar a seleção, sem forçar pulo de aba
         va = col_v1.selectbox("Base (Antiga)", lista_versoes, key="va_comp", on_change=lambda: st.session_state.update({"comparacao_realizada": False}))
         vb = col_v2.selectbox("Comparação (Nova)", lista_versoes, key="vb_comp", on_change=lambda: st.session_state.update({"comparacao_realizada": False}))
         
@@ -257,6 +263,7 @@ with abas[3]:
 
 # --- 5. EXPORTAR ---
 with abas[4]:
+    st.session_state.aba_ativa = 4 # CORREÇÃO 3
     if st.button("Gerar Arquivo", key="btn_exportar_xlsx"):
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
@@ -266,9 +273,10 @@ with abas[4]:
 
 # --- 6. GERENCIAR ---
 with abas[5]:
+    st.session_state.aba_ativa = 5 # CORREÇÃO 3
     if lista_versoes:
         v_del = st.selectbox("Versão para Deletar", lista_versoes, key="v_del_aba_gerenciar")
         if st.button("Confirmar Exclusão", key="btn_deletar_versao"):
             excluir_versao(v_del)
             st.cache_data.clear()
-            st.rerun() # Aqui o rerun é aceitável pois a lista lateral PRECISA atualizar
+            st.rerun()
