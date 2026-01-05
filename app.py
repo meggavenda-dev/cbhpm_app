@@ -146,13 +146,18 @@ def registrar_arquivo(h, versao):
         cur.execute("INSERT OR IGNORE INTO arquivos_importados VALUES (NULL,?,?,?)", (h, versao, datetime.now().isoformat()))
 
 def excluir_versao(versao):
+    # Usamos o context manager para garantir o COMMIT
     with gerenciar_db() as con:
         cur = con.cursor()
+        # 1. Remove os procedimentos
         cur.execute("DELETE FROM procedimentos WHERE versao=?", (versao,))
-        total = cur.rowcount
+        removidos = cur.rowcount
+        # 2. Remove o registro de importação para permitir re-importar o mesmo arquivo se desejar
         cur.execute("DELETE FROM arquivos_importados WHERE versao=?", (versao,))
-        salvar_banco_github(f"Exclusão da versão {versao}")
-        return total
+        
+    # 3. Sincroniza com o GitHub IMEDIATAMENTE
+    salvar_banco_github(f"Exclusão definitiva da versão: {versao}")
+    return removidos
 
 # =====================================================
 # IMPORTAÇÃO (CORRIGIDA PARA ERRO DE ENCODING)
@@ -346,8 +351,20 @@ with abas[4]:
 # --- 6. GERENCIAR ---
 with abas[5]:
     if lista_versoes:
-        v_del = st.selectbox("Versão para Deletar", lista_versoes, key="v_del_aba")
-        if st.button("Confirmar Exclusão Definitiva"):
-            excluir_versao(v_del)
-            st.cache_data.clear()
-            st.rerun()
+        st.subheader("🗑️ Zona de Exclusão")
+        v_del = st.selectbox("Selecione a versão para apagar do banco de dados", lista_versoes, key="v_del_aba")
+        
+        # Adicionar uma caixa de confirmação extra para segurança
+        confirmar_extra = st.checkbox(f"Eu entendo que isso apagará todos os dados da {v_del}")
+        
+        if st.button("Confirmar Exclusão Definitiva", type="primary"):
+            if confirmar_extra:
+                with st.spinner(f"Apagando {v_del} e sincronizando com a nuvem..."):
+                    n_registros = excluir_versao(v_del)
+                    # Limpa o cache de TODAS as funções decoradas com @st.cache_data
+                    st.cache_data.clear() 
+                    st.success(f"Sucesso! {n_registros} registros da versão '{v_del}' foram removidos.")
+                    time.sleep(2) # Pausa para o usuário ler a mensagem
+                    st.rerun() # Reinicia o app para atualizar a barra lateral
+            else:
+                st.warning("Você precisa marcar a caixa de confirmação para prosseguir.")
