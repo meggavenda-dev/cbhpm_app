@@ -263,22 +263,66 @@ with abas[1]:
             st.dataframe(res, use_container_width=True, hide_index=True)
 
 # --- 3. CALCULAR ---
+Para deixar a aba Calcular mais transparente para o auditor, vamos ajustar a interface para mostrar os "componentes" do preço antes de exibir o resultado final. Isso ajuda a conferir se os valores extraídos da tabela estão corretos.
+
+Aqui está o código atualizado para a aba Calcular:
+
+Python
+
+# --- 3. CALCULAR (DETALHADO) ---
 with abas[2]:
-    if v_selecionada:
-        cod_calc = st.text_input("Código do Procedimento", key="in_calc")
-        col1, col2, col3 = st.columns(3)
-        uco_v = col1.number_input("Valor UCO (R$)", 1.0, step=0.1)
-        filme_v = col2.number_input("Valor Filme (R$)", 21.70, step=0.1)
-        infla = col3.number_input("Ajuste Adicional (%)", 0.0)
+    if v_ativa:
+        st.subheader("🧮 Calculadora de Honorários e Custos")
         
-        if st.button("Calcular Honorários"):
-            res = buscar_dados(cod_calc, v_selecionada, "Código")
+        c1, c2 = st.columns([1, 2])
+        cod_calc = c1.text_input("Código do Procedimento", key="in_calc")
+        
+        # Inputs de valores de referência
+        col_ref1, col_ref2, col_ref3 = st.columns(3)
+        uco_ref = col_ref1.number_input("Valor da UCO (R$)", min_value=0.0, value=1.0, step=0.1)
+        filme_ref = col_ref2.number_input("Valor do Filme (R$)", min_value=0.0, value=21.70, step=0.1)
+        infla_ref = col_ref3.number_input("Ajuste/Deflator (%)", value=0.0, step=1.0)
+        
+        if st.button("Calcular Total"):
+            res = buscar_dados(cod_calc, v_ativa, "Código")
+            
             if not res.empty:
                 p = res.iloc[0]
-                f = 1 + (infla/100)
-                total = (p['porte']*f) + (p['uco']*uco_v*f) + (p['filme']*filme_v*f)
-                st.metric(f"Total: {p['descricao']}", f"R$ {total:,.2f}")
-            else: st.error("Código não encontrado.")
+                
+                # Fator de ajuste (ex: 10% de acréscimo = 1.10)
+                fator = 1 + (infla_ref / 100)
+                
+                # Cálculos individuais
+                v_porte = p['porte'] * fator
+                v_uco = (p['uco'] * uco_ref) * fator
+                v_filme = (p['filme'] * filme_ref) * fator
+                total_geral = v_porte + v_uco + v_filme
+                
+                st.divider()
+                st.markdown(f"### Resultado para: **{p['descricao']}**")
+                
+                # Exibição dos componentes em colunas
+                m1, m2, m3, m4 = st.columns(4)
+                
+                m1.metric("Valor Porte", f"R$ {v_porte:,.2f}")
+                m2.metric("Custo UCO", f"R$ {v_uco:,.2f}")
+                m3.metric("Custo Filme", f"R$ {v_filme:,.2f}")
+                
+                # Destaque para o valor total
+                st.write("") # Espaçamento
+                st.success(f"## **Valor Total Calculado: R$ {total_geral:,.2f}**")
+                
+                # Detalhamento técnico opcional
+                with st.expander("Ver memória de cálculo"):
+                    st.write(f"- **Porte Base:** {p['porte']} unidades")
+                    st.write(f"- **UCO:** {p['uco']} unidades x R$ {uco_ref}")
+                    st.write(f"- **Filme:** {p['filme']} unidades x R$ {filme_ref}")
+                    if infla_ref != 0:
+                        st.write(f"- **Ajuste Aplicado:** {infla_ref}%")
+            else:
+                st.error("⚠️ Código não encontrado na versão selecionada.")
+    else:
+        st.warning("Selecione uma Tabela Ativa na barra lateral para calcular.")
 
 # --- 4. COMPARAR ---
 with abas[3]:
