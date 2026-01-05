@@ -232,33 +232,33 @@ abas = st.tabs([
 
 # ---------------- IMPORTAR ----------------
 with abas[0]:
-    versao = st.text_input("Versão CBHPM")
-    arquivos = st.file_uploader("Arquivos", accept_multiple_files=True)
-    if st.button("Importar dados"):
+    versao = st.text_input("Versão CBHPM", key="import_versao")
+    arquivos = st.file_uploader("Arquivos", accept_multiple_files=True, key="import_files")
+    if st.button("Importar dados", key="btn_importar"):
         importar(arquivos, versao)
         st.success("Importação concluída")
 
 # ---------------- CONSULTAR ----------------
 with abas[1]:
-    v = st.selectbox("Tabela CBHPM", versoes())
-    tipo = st.radio("Buscar por", ["Código", "Descrição"])
-    termo = st.text_input("Termo de busca")
+    v = st.selectbox("Tabela CBHPM", versoes(), key="consulta_tabela")
+    tipo = st.radio("Buscar por", ["Código", "Descrição"], key="consulta_tipo")
+    termo = st.text_input("Termo de busca", key="consulta_termo")
 
-    if st.button("Buscar"):
+    if st.button("Buscar", key="btn_buscar"):
         df = buscar_codigo(termo, v) if tipo == "Código" else buscar_descricao(termo, v)
         st.dataframe(df, use_container_width=True)
 
 # ---------------- CALCULAR ----------------
 with abas[2]:
-    v = st.selectbox("Tabela CBHPM", versoes())
-    codigo = st.text_input("Código do procedimento")
+    v = st.selectbox("Tabela CBHPM", versoes(), key="calculo_tabela")
+    codigo = st.text_input("Código do procedimento", key="calculo_codigo")
 
     col1, col2, col3 = st.columns(3)
-    valor_uco = col1.number_input("Valor da UCO", value=1.0)
-    valor_filme = col2.number_input("Valor do Filme", value=21.70)
-    inflator = col3.number_input("Inflator (%)", value=0.0)
+    valor_uco = col1.number_input("Valor da UCO", value=1.0, key="valor_uco")
+    valor_filme = col2.number_input("Valor do Filme", value=21.70, key="valor_filme")
+    inflator = col3.number_input("Inflator (%)", value=0.0, key="inflator")
 
-    if st.button("Calcular"):
+    if st.button("Calcular", key="btn_calcular"):
         df = buscar_codigo(codigo, v)
         if df.empty:
             st.warning("Procedimento não encontrado")
@@ -280,19 +280,21 @@ with abas[2]:
 
 # ---------------- COMPARAR ----------------
 with abas[3]:
-    v1 = st.selectbox("Versão A", versoes())
-    v2 = st.selectbox("Versão B", versoes())
+    v1 = st.selectbox("Versão A", versoes(), key="comparar_v1")
+    v2 = st.selectbox("Versão B", versoes(), key="comparar_v2")
+
     df1 = buscar_codigo("", v1)
     df2 = buscar_codigo("", v2).rename(
         columns={"porte": "porte_B", "uco": "uco_B", "filme": "filme_B"}
     )
+
     comp = df1.merge(df2, on="codigo")
     st.dataframe(comp, use_container_width=True)
 
 # ---------------- EXPORTAR ----------------
 with abas[4]:
     tabelas = ["procedimentos", "arquivos_importados"]
-    escolha = st.multiselect("Tabelas", tabelas)
+    escolha = st.multiselect("Tabelas", tabelas, key="export_tabelas")
 
     con = conn()
     output = BytesIO()
@@ -308,5 +310,6 @@ with abas[4]:
     st.download_button(
         "Baixar Excel",
         data=output.getvalue(),
-        file_name="cbhpm_export.xlsx"
+        file_name="cbhpm_export.xlsx",
+        key="btn_exportar"
     )
