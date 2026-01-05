@@ -347,23 +347,19 @@ with abas[2]:
                 else:
                     st.error(f"O código '{cod_calc}' não foi encontrado na tabela {v_selecionada}.")
         
-# --- 4. COMPARAR ---
+# --- 4. COMPARAR (CORRIGIDO) ---
 with abas[3]:
-      st.session_state.aba_ativa_idx = 3
+    st.session_state.aba_ativa_idx = 3
+    # Verifique se o 'if' abaixo tem exatamente 4 espaços de recuo em relação ao 'with'
     if len(lista_v) >= 2:
-        # Seleciona as versões
         col1, col2 = st.columns(2)
-        v1 = col1.selectbox("Versão Anterior", lista_v, key="v1")
-        v2 = col2.selectbox("Versão Atual", lista_v, key="v2")
+        v1 = col1.selectbox("Versão Anterior", lista_v, key="v1_comp")
+        v2 = col2.selectbox("Versão Atual", lista_v, key="v2_comp")
         
-        # Botão de análise: mantém a aba ativa
-        if st.button("Analisar Reajustes"):
+        if st.button("Analisar Reajustes", key="btn_analisar"):
             st.session_state.comparacao_realizada = True
-            st.session_state.aba_ativa_idx = 3  # salva a aba ativa
-
-        # Mantém a aba ativa mesmo após rerun
+        
         if st.session_state.comparacao_realizada:
-            st.session_state.aba_ativa_idx = 3  # reforça aba ativa
             df1 = buscar_dados("", v1, "Código")
             df2 = buscar_dados("", v2, "Código").rename(
                 columns={"porte":"porte_2", "uco":"uco_2", "filme":"filme_2", "descricao":"desc_2"}
@@ -373,37 +369,41 @@ with abas[3]:
             if not comp.empty:
                 comp['var_porte'] = ((comp['porte_2'] - comp['porte']) / comp['porte'].replace(0,1)) * 100
                 
-                # Resumo das Métricas
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Itens Comuns", len(comp))
-                m2.metric("Variação Média Porte", f"{comp['var_porte'].mean():.2f}%")
-                m3.metric("Itens com Aumento", len(comp[comp['var_porte'] > 0]))
+                m2.metric("Variação Média", f"{comp['var_porte'].mean():.2f}%")
+                m3.metric("Com Aumento", len(comp[comp['var_porte'] > 0]))
 
-                # Gráfico
-                resumo = comp.groupby(comp['codigo'].str[:2])['var_porte'].mean().reset_index()
+                # Gráfico resumido por grupo
+                comp['Grupo'] = comp['codigo'].astype(str).str[:2]
+                resumo = comp.groupby('Grupo')['var_porte'].mean().reset_index()
                 chart = alt.Chart(resumo).mark_bar().encode(
-                    x=alt.X('codigo:N', title="Grupo (Capítulo)"),
-                    y=alt.Y('var_porte:Q', title="Variação %"),
+                    x=alt.X('Grupo:N', sort='-y', title="Capítulo (Início do Código)"),
+                    y=alt.Y('var_porte:Q', title="Variação Média (%)"),
                     color=alt.condition(alt.datum.var_porte > 0, alt.value('steelblue'), alt.value('orange'))
                 ).properties(height=350)
                 st.altair_chart(chart, use_container_width=True)
 
-                st.dataframe(comp[['codigo', 'descricao', 'porte', 'porte_2', 'var_porte']], 
-                             use_container_width=True, hide_index=True,
-                             column_config={"var_porte": st.column_config.NumberColumn("Variação %", format="%.2f%%")})
+                st.dataframe(
+                    comp[['codigo', 'descricao', 'porte', 'porte_2', 'var_porte']], 
+                    use_container_width=True, 
+                    hide_index=True,
+                    column_config={"var_porte": st.column_config.NumberColumn("Variação %", format="%.2f%%")}
+                )
     else:
-        st.warning("Necessário ao menos 2 versões para comparar.")
+        st.warning("⚠️ É necessário importar ao menos duas tabelas para comparar.")
 
-
-# --- 5. EXPORTAR ---
+# --- 5. EXPORTAR (CORRIGIDO) ---
 with abas[4]:
+    st.session_state.aba_ativa_idx = 4
     if lista_v:
-        if st.button("📦 Gerar Backup Completo (Excel)"):
+        st.subheader("📤 Exportar Banco de Dados")
+        if st.button("📦 Gerar Backup em Excel"):
             output = BytesIO()
             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
                 with get_connection() as con:
                     pd.read_sql("SELECT * FROM procedimentos", con).to_excel(writer, index=False)
-            st.download_button("📥 Baixar Arquivo", output.getvalue(), "cbhpm_completa.xlsx")
+            st.download_button("📥 Baixar Arquivo", output.getvalue(), "cbhpm_completa.xlsx", key="btn_dl")
 
 # --- 6. GERENCIAR ---
 with abas[5]:
