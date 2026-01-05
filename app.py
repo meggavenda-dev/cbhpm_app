@@ -468,8 +468,9 @@ if aba_atual == "📋 Consultar":
 
 
 
+
 # =====================================================
-# 3) CALCULAR  (UCO automático; manter métrica UCO; ajuste com escopo)
+# 3) CALCULAR  (UCO automático; mantém métrica UCO; ajuste com checkboxes)
 # =====================================================
 if aba_atual == "🧮 Calcular":
     lista_v = versoes()
@@ -499,13 +500,12 @@ if aba_atual == "🧮 Calcular":
             cod_calc = col_cod.text_input("Código do Procedimento", placeholder="Ex: 10101012", key="in_calc")
             infla = col_ajuste.number_input("Ajuste Adicional (%)", 0.0, step=0.5, key="in_infla")
 
-            # Escopo do ajuste adicional: onde aplicar o percentual informado
-            aplicar_em = st.radio(
-                "Aplicar ajuste em",
-                ["Somente Porte", "Porte e UCO", "Porte, UCO e Filme"],
-                horizontal=False,
-                help="Escolha sobre quais componentes o ajuste percentual será aplicado."
-            )
+            # Checkboxes independentes para escolher onde aplicar o ajuste
+            st.write("**Aplicar ajuste em:**")
+            c_port, c_uco, c_fil = st.columns(3)
+            aplicar_porte = c_port.checkbox("Porte", value=True, key="chk_aplicar_porte")
+            aplicar_uco   = c_uco.checkbox("UCO",   value=True, key="chk_aplicar_uco")
+            aplicar_filme = c_fil.checkbox("Filme", value=True, key="chk_aplicar_filme")
 
             # Mantém apenas o input de Filme
             filme_v = st.number_input("Valor Filme (R$)", 21.70, step=0.01, format="%.2f", key="in_filme_val")
@@ -520,15 +520,10 @@ if aba_atual == "🧮 Calcular":
                 if not res.empty:
                     p = res.iloc[0]
 
-                    # Flags de aplicação do ajuste
-                    aplica_porte = aplicar_em in ("Somente Porte", "Porte e UCO", "Porte, UCO e Filme")
-                    aplica_uco   = aplicar_em in ("Porte e UCO", "Porte, UCO e Filme")
-                    aplica_filme = aplicar_em == "Porte, UCO e Filme"
-
-                    # Fatores por componente
-                    f_porte = (1 + infla/100) if (aplica_porte and infla != 0) else 1.0
-                    f_uco   = (1 + infla/100) if (aplica_uco   and infla != 0) else 1.0
-                    f_filme = (1 + infla/100) if (aplica_filme and infla != 0) else 1.0
+                    # Fatores por componente com base nos checkboxes
+                    f_porte = (1 + infla/100) if (aplicar_porte and infla != 0) else 1.0
+                    f_uco   = (1 + infla/100) if (aplicar_uco   and infla != 0) else 1.0
+                    f_filme = (1 + infla/100) if (aplicar_filme and infla != 0) else 1.0
 
                     # Cálculos
                     porte_calc = p['porte'] * f_porte
@@ -544,7 +539,7 @@ if aba_atual == "🧮 Calcular":
                         </div>
                     """, unsafe_allow_html=True)
 
-                    # Métricas exibidas: Porte, UCO, Filme e TOTAL
+                    # Métricas exibidas: Porte, UCO, Filme e TOTAL (mantemos a métrica UCO)
                     c_porte, c_uco, c_filme, c_total = st.columns(4)
                     c_porte.metric("Porte", f"R$ {porte_calc:,.2f}")
                     c_uco.metric("UCO", f"R$ {uco_calc:,.2f}")
@@ -553,23 +548,26 @@ if aba_atual == "🧮 Calcular":
                         "TOTAL FINAL",
                         f"R$ {total:,.2f}",
                         delta=f"{infla:.2f}%"
-                        if (infla != 0 and aplicar_em in ["Somente Porte", "Porte e UCO", "Porte, UCO e Filme"])
-                        else None
+                              if (infla != 0 and any([aplicar_porte, aplicar_uco, aplicar_filme]))
+                              else None
                     )
 
                     # Feedback do escopo aplicado (opcional)
-                    escopo_txt = {
-                        "Somente Porte": "Ajuste aplicado somente sobre o Porte.",
-                        "Porte e UCO": "Ajuste aplicado sobre Porte e UCO.",
-                        "Porte, UCO e Filme": "Ajuste aplicado sobre Porte, UCO e Filme."
-                    }[aplicar_em]
-                    st.caption(f"ℹ️ {escopo_txt}")
+                    componentes = []
+                    if aplicar_porte: componentes.append("Porte")
+                    if aplicar_uco:   componentes.append("UCO")
+                    if aplicar_filme: componentes.append("Filme")
+                    if infla != 0 and componentes:
+                        st.caption("ℹ️ Ajuste aplicado em: **" + ", ".join(componentes) + "**")
+                    elif infla == 0:
+                        st.caption("ℹ️ Ajuste adicional está **zerado** (0%).")
 
                     st.divider()
                 else:
                     st.error(f"O código '{cod_calc}' não foi encontrado na tabela {v_selecionada}.")
     else:
         st.warning("Nenhuma versão disponível. Importe dados na aba '📥 Importar'.")
+
 
 
 # =====================================================
