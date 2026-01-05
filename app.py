@@ -1,4 +1,3 @@
-
 import os
 import base64
 import hashlib
@@ -124,7 +123,6 @@ def extrair_valor(row, df, col_opts):
 
 def read_csv_smart(file):
     """Detecta delimitador e encoding de forma simples para CSV."""
-    # Ler amostra como bytes
     file.seek(0)
     sample_bytes = file.read(2048)
     # tentar utf-8, senão latin-1
@@ -359,11 +357,62 @@ st.set_page_config(page_title="CBHPM Gestão Inteligente", layout="wide")
 st.title("⚖️ CBHPM • Auditoria e Gestão")
 
 # =====================================================
+# TEMA GLOBAL (CSS)
+# =====================================================
+st.markdown("""
+<style>
+:root{
+  --primary:#1E88E5; --primary-700:#1b78ca;
+  --success:#10B981; --warning:#F59E0B; --error:#EF4444;
+  --text:#111827; --muted:#6B7280; --bg:#F7FAFC; --white:#ffffff; --border:#E5E7EB;
+}
+html, body, [data-testid="stAppViewContainer"]{
+  background: var(--bg); color: var(--text);
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+}
+h1, h2, h3 { letter-spacing: .2px; }
+h1 { font-weight: 800; }
+h2 { font-weight: 700; }
+.card {
+  background: var(--white); border-radius: 12px; padding: 18px; border: 1px solid var(--border);
+  box-shadow: 0 2px 10px rgba(17,24,39,.06); margin-bottom: 16px;
+}
+.res-card {
+  padding: 16px 18px; border-radius: 12px; background-color: var(--white);
+  border-left: 6px solid var(--primary); box-shadow: 0 2px 10px rgba(17,24,39,.06); margin: 8px 0 18px 0;
+}
+.res-card small { color: var(--muted); }
+[data-testid="stMetricValue"] { font-size: 1.9rem; color: var(--primary); font-weight: 800; }
+[data-testid="stMetricLabel"] { color: var(--muted); font-weight: 600; letter-spacing: .2px; }
+.stButton>button {
+  background: var(--primary)!important; color: #fff!important; border-radius: 10px!important;
+  border: 1px solid var(--primary-700)!important; padding: .55rem .9rem!important;
+}
+.stButton>button:hover { filter: brightness(1.06); }
+.stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"]>div {
+  border-radius: 10px; border: 1px solid var(--border);
+}
+.stRadio [role="radiogroup"] { gap: .5rem; }
+[data-testid="stSidebar"] { background: #ffffff; border-right: 1px solid var(--border); }
+.total-strip {
+  display:flex; align-items:center; justify-content:space-between; padding: 12px 16px; border-radius: 10px;
+  background: #ffffff; border:1px solid var(--border); box-shadow: 0 2px 10px rgba(17,24,39,.05);
+}
+.total-strip .label { font-weight:700; color:var(--text); letter-spacing:.2px; }
+.total-strip .value { font-size:1.6rem; color:var(--success); font-weight:800; }
+.badge {
+  display:inline-block; padding:4px 8px; border-radius:999px; font-size:.75rem;
+  border:1px solid var(--border); background:#fff; color:var(--muted); margin-right:6px;
+}
+.stDataFrame { border-radius: 10px; overflow: hidden; }
+small.note { color: var(--muted); font-size: .85rem; }
+</style>
+""", unsafe_allow_html=True)
+
+# =====================================================
 # NAVEGAÇÃO (Sidebar)
 # =====================================================
 opcoes = ["📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar", "📥 Importar"]
-
-# O índice é controlado por aba_pref (sem key para evitar conflito)
 aba_atual = st.sidebar.radio(
     "Navegação",
     opcoes,
@@ -374,7 +423,8 @@ aba_atual = st.sidebar.radio(
 # 1) IMPORTAR
 # =====================================================
 if aba_atual == "📥 Importar":
-    st.subheader("Carregar Novos Dados")
+    st.subheader("📥 Carregar Novos Dados")
+    st.caption("Faça upload de arquivos CSV/Excel com procedimentos CBHPM.")
 
     # Variáveis de controle no estado da sessão
     if "processando" not in st.session_state:
@@ -390,37 +440,31 @@ if aba_atual == "📥 Importar":
     if not st.session_state.processando:
         # EXIBE O FORMULÁRIO
         with area_dinamica.container():
+            st.markdown('<div class="card">', unsafe_allow_html=True)
             with st.form("form_importacao", clear_on_submit=True):
                 v_imp_input = st.text_input("Nome da Versão (ex: CBHPM 2024)")
                 arqs_input = st.file_uploader("Upload arquivos (CSV ou Excel)", accept_multiple_files=True)
                 submitted = st.form_submit_button("🚀 Iniciar Importação Agora")
-                
-                if submitted:
-                    if not v_imp_input or not arqs_input:
-                        st.error("Preencha o nome da versão e selecione os arquivos.")
-                    else:
-                        # SALVA NO ESTADO DA SESSÃO PARA O PRÓXIMO CICLO
-                        st.session_state.temp_v_imp = v_imp_input
-                        st.session_state.temp_arqs = arqs_input
-                        st.session_state.processando = True
-                        st.rerun()  # Reinicia para trocar a tela
+            st.markdown('</div>', unsafe_allow_html=True)
+            if submitted:
+                if not v_imp_input or not arqs_input:
+                    st.error("Preencha o nome da versão e selecione os arquivos.")
+                else:
+                    st.session_state.temp_v_imp = v_imp_input
+                    st.session_state.temp_arqs = arqs_input
+                    st.session_state.processando = True
+                    st.rerun()  # Reinicia para trocar a tela
     else:
         # EXIBE O STATUS DE PROCESSAMENTO (O formulário sumiu)
         with area_dinamica.container():
             st.info(f"⚙️ Processando: **{st.session_state.temp_v_imp}**")
-            
-            # Chamamos a função usando os dados salvos no session_state
             if importar(st.session_state.temp_arqs, st.session_state.temp_v_imp):
                 st.toast("Dados processados com sucesso!", icon="✅")
                 st.success("✅ Importação concluída! O sistema será atualizado.")
-                
-                # Limpa o cache e as variáveis temporárias
                 st.cache_data.clear()
                 st.session_state.processando = False
                 st.session_state.temp_arqs = None
                 st.session_state.temp_v_imp = ""
-
-                # Após importar, ajustar aba preferida para Consultar e rerun
                 st.session_state.aba_pref = "📋 Consultar"
                 time.sleep(1)
                 st.rerun()
@@ -438,16 +482,17 @@ if aba_atual == "📋 Consultar":
     v_selecionada = st.sidebar.selectbox("Tabela Ativa", lista_v, key="v_global_consulta") if lista_v else None
 
     if v_selecionada:
-        st.info(f"Pesquisando na Versão: {v_selecionada}")
+        st.subheader("📋 Consulta de Procedimentos")
+        st.caption("Preencha os campos e clique em **🔎 Pesquisar**. Você pode paginar e baixar os resultados.")
 
-        # Formulário de consulta com botão de pesquisa
+        st.markdown('<div class="card">', unsafe_allow_html=True)
         with st.form("form_consulta"):
             c1, c2 = st.columns([1, 3])
-            tipo = c1.radio("Busca por", ["Código", "Descrição"], horizontal=True)
-            termo = c2.text_input("Digite o termo de busca...")
+            tipo = c1.radio("Busca por", ["Código", "Descrição"], horizontal=True, help="Escolha por código ou descrição.")
+            termo = c2.text_input("Digite o termo de busca...", help="Ex.: '10101012' ou parte da descrição.")
             pesquisar = st.form_submit_button("🔎 Pesquisar")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        # Executa a busca apenas quando o botão for pressionado
         if pesquisar:
             if termo.strip() == "":
                 st.warning("Digite um termo de busca antes de pesquisar.")
@@ -456,18 +501,16 @@ if aba_atual == "📋 Consultar":
                 if res.empty:
                     st.info("Nenhum resultado encontrado para o termo informado.")
                 else:
-                    # Paginação e opção de download dos resultados
                     show_dataframe_paginated(res, page_size=200)
                     csv_data = res.to_csv(index=False).encode("utf-8")
                     st.download_button("📥 Baixar resultados (CSV)", csv_data, "resultados_consulta.csv", "text/csv")
         else:
-            st.caption("Preencha os campos e clique em **🔎 Pesquisar** para ver os resultados.")
+            st.caption("Preencha e clique em **🔎 Pesquisar**.")
     else:
         st.warning("Nenhuma versão disponível. Importe dados na aba '📥 Importar'.")
 
-
 # =====================================================
-# 3) CALCULAR  (UCO automático; mantém métrica UCO; checkboxes reativos)
+# 3) CALCULAR  (UCO automático; mantém métrica UCO; checkboxes reativos + design)
 # =====================================================
 if aba_atual == "🧮 Calcular":
     lista_v = versoes()
@@ -475,37 +518,28 @@ if aba_atual == "🧮 Calcular":
 
     if v_selecionada:
         st.subheader("🧮 Calculadora de Honorários CBHPM")
+        st.caption("Preencha os campos. O cálculo atualiza automaticamente conforme você marca os componentes a ajustar.")
 
-        st.markdown("""
-            <style>
-            [data-testid="stMetricValue"] { font-size: 1.8rem; color: #007bff; }
-            .res-card {
-                padding: 20px;
-                border-radius: 10px;
-                background-color: #f8f9fa;
-                border-left: 5px solid #007bff;
-                margin-bottom: 20px;
-            }
-            </style>
-        """, unsafe_allow_html=True)
+        UCO_VALOR_APLICADO = float(st.secrets.get("UCO_VALOR", UCO_DEFAULT))
 
-        # Valor monetário da UCO aplicado automaticamente (sem campo de input)
-        UCO_VALOR_APLICADO = float(st.secrets.get("UCO_VALOR", 1.00))
-
-        # --- Entradas reativas (sem formulário) ---
-        col_cod, col_ajuste = st.columns([2, 1])
-        cod_calc = col_cod.text_input("Código do Procedimento", placeholder="Ex: 10101012", key="in_calc")
-        infla = col_ajuste.number_input("Ajuste Adicional (%)", 0.0, step=0.5, key="in_infla")
+        # Grupo de entradas em card
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        col_cod, col_ajuste, col_filme = st.columns([2, 1, 1.2])
+        cod_calc = col_cod.text_input("Código do Procedimento", placeholder="Ex: 10101012",
+                                      key="in_calc", help="Código conforme a versão ativa.")
+        infla = col_ajuste.number_input("Ajuste Adicional (%)", 0.0, step=0.5,
+                                        key="in_infla", help="Percentual do ajuste.")
+        filme_v = col_filme.number_input("Valor Filme (R$)", 21.70, step=0.01, format="%.2f",
+                                         key="in_filme_val", help="Valor unitário de filme.")
 
         st.write("**Aplicar ajuste em:** (marque para incluir no ajuste)")
         c_port, c_uco, c_fil = st.columns(3)
         aplicar_porte = c_port.checkbox("Porte", value=False, key="chk_aplicar_porte")
         aplicar_uco   = c_uco.checkbox("UCO",   value=False, key="chk_aplicar_uco")
         aplicar_filme = c_fil.checkbox("Filme", value=False, key="chk_aplicar_filme")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        filme_v = st.number_input("Valor Filme (R$)", 21.70, step=0.01, format="%.2f", key="in_filme_val")
-
-        # --- Cálculo reativo: ocorre automaticamente ao mudar qualquer input ---
+        # Cálculo reativo
         if not cod_calc:
             st.info("Informe o **Código do Procedimento** para calcular.")
         else:
@@ -514,46 +548,50 @@ if aba_atual == "🧮 Calcular":
                 st.error(f"O código '{cod_calc}' não foi encontrado na tabela {v_selecionada}.")
             else:
                 p = res.iloc[0]
-
-                # Fatores de ajuste por componente conforme checkboxes
                 f_porte = (1 + infla/100) if (aplicar_porte and infla != 0) else 1.0
                 f_uco   = (1 + infla/100) if (aplicar_uco   and infla != 0) else 1.0
                 f_filme = (1 + infla/100) if (aplicar_filme and infla != 0) else 1.0
 
-                # Cálculos
                 porte_calc = p['porte'] * f_porte
                 uco_calc   = p['uco']   * UCO_VALOR_APLICADO * f_uco
                 filme_calc = p['filme'] * filme_v * f_filme
                 total = porte_calc + uco_calc + filme_calc
 
-                # Resultado visual
+                # Card do procedimento
                 st.markdown(f"""
                     <div class="res-card">
-                        <small>Procedimento encontrado em <b>{v_selecionada}</b></small><br>
-                        <span style='font-size: 1.2rem;'>{p['descricao']}</span>
+                        <small>Versão ativa: <b>{v_selecionada}</b></small><br>
+                        <span style='font-size: 1.05rem; font-weight: 600;'>{p['descricao']}</span><br>
+                        <small class="note">Código {cod_calc}</small>
                     </div>
                 """, unsafe_allow_html=True)
 
-                # Métricas: Porte, UCO, Filme e TOTAL (UCO mantida)
-                c_porte, c_uco_box, c_filme, c_total = st.columns(4)
+                # Métricas
+                c_porte, c_uco_box, c_filme = st.columns(3)
                 c_porte.metric("Porte", f"R$ {porte_calc:,.2f}")
                 c_uco_box.metric("UCO", f"R$ {uco_calc:,.2f}")
                 c_filme.metric("Filme", f"R$ {filme_calc:,.2f}")
 
-                # Delta do total aparece se houver ajuste (>0%) em ao menos um componente marcado
+                # Faixa TOTAL
                 houve_ajuste = (infla != 0) and (aplicar_porte or aplicar_uco or aplicar_filme)
-                c_total.metric("TOTAL FINAL", f"R$ {total:,.2f}", delta=f"{infla:.2f}%" if houve_ajuste else None)
+                st.markdown(f"""
+                    <div class="total-strip" style="border-left:6px solid var(--success); margin-top: 4px;">
+                        <div class="label">TOTAL FINAL</div>
+                        <div class="value">R$ {total:,.2f}</div>
+                    </div>
+                """, unsafe_allow_html=True)
 
-                # Feedback do escopo aplicado (opcional)
-                if infla != 0:
-                    componentes = []
-                    if aplicar_porte: componentes.append("Porte")
-                    if aplicar_uco:   componentes.append("UCO")
-                    if aplicar_filme: componentes.append("Filme")
-                    if componentes:
-                        st.caption("ℹ️ Ajuste aplicado em: **" + ", ".join(componentes) + "**")
-                    else:
-                        st.caption("ℹ️ Ajuste adicional está **zerado** em todos os componentes (nenhum marcado).")
+                # Badges de escopo
+                comps = []
+                if aplicar_porte: comps.append("Porte")
+                if aplicar_uco:   comps.append("UCO")
+                if aplicar_filme: comps.append("Filme")
+                if houve_ajuste:
+                    st.markdown("".join([f"<span class='badge'>{c}</span>" for c in comps]), unsafe_allow_html=True)
+                    st.caption(f"🧮 Ajuste de {infla:.2f}% aplicado nos componentes marcados.")
+                else:
+                    st.caption("🔧 Nenhum componente marcado para ajuste ou ajuste adicional está zero.")
+
                 st.divider()
     else:
         st.warning("Nenhuma versão disponível. Importe dados na aba '📥 Importar'.")
@@ -564,6 +602,9 @@ if aba_atual == "🧮 Calcular":
 if aba_atual == "⚖️ Comparar":
     lista_v = versoes()
     if len(lista_v) >= 2:
+        st.subheader("⚖️ Comparação entre Versões")
+        st.caption("Selecione versões e analise variações de porte (média e mediana).")
+
         col1, col2 = st.columns(2)
         v1 = col1.selectbox("Versão Anterior", lista_v, key="v1")
         v2 = col2.selectbox("Versão Atual", lista_v, key="v2")
@@ -579,7 +620,6 @@ if aba_atual == "⚖️ Comparar":
             comp = df1.merge(df2, on="codigo")
             
             if not comp.empty:
-                # Variação % com NaN quando porte=0
                 base = comp['porte']
                 comp['var_porte'] = ((comp['porte_2'] - base) / base.replace(0, pd.NA)) * 100
 
@@ -593,8 +633,9 @@ if aba_atual == "⚖️ Comparar":
                 chart = alt.Chart(resumo).mark_bar().encode(
                     x=alt.X('codigo:N', title="Grupo (Capítulo)"),
                     y=alt.Y('var_porte:Q', title="Variação % (média)"),
-                    color=alt.condition(alt.datum.var_porte > 0, alt.value('steelblue'), alt.value('orange'))
-                ).properties(height=350)
+                    color=alt.condition(alt.datum.var_porte > 0, alt.value('#1E88E5'), alt.value('#F59E0B')),
+                    tooltip=[alt.Tooltip('codigo:N', title='Grupo'), alt.Tooltip('var_porte:Q', title='Variação média', format='.2f')]
+                ).properties(height=320)
                 st.altair_chart(chart, use_container_width=True)
 
                 st.dataframe(
@@ -613,6 +654,9 @@ if aba_atual == "⚖️ Comparar":
 if aba_atual == "📤 Exportar":
     lista_v = versoes()
     if lista_v:
+        st.subheader("📤 Exportação de Dados")
+        st.caption("Gere um backup completo da base (procedimentos e arquivos importados).")
+        st.markdown('<div class="card">', unsafe_allow_html=True)
         if st.button("📦 Gerar Backup Completo (Excel)"):
             output = BytesIO()
             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
@@ -634,6 +678,7 @@ if aba_atual == "📤 Exportar":
                         ws.set_column(i, i, min(max_len, 40))
 
             st.download_button("📥 Baixar Arquivo", output.getvalue(), "cbhpm_completa.xlsx")
+        st.markdown('</div>', unsafe_allow_html=True)
     else:
         st.warning("Nenhuma versão disponível para exportar. Importe dados na aba '📥 Importar'.")
 
@@ -643,6 +688,10 @@ if aba_atual == "📤 Exportar":
 if aba_atual == "🗑️ Gerenciar":
     lista_v = versoes()
     if lista_v:
+        st.subheader("🗑️ Gerenciar Versões")
+        st.caption("Exclua versões completas. Esta ação é definitiva e sincroniza com o GitHub.")
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+
         v_del = st.selectbox("Versão para Exclusão", lista_v)
         confirmar = st.checkbox("Confirmo a exclusão definitiva desta versão e sincronização com GitHub.")
         if st.button("🗑️ Deletar Versão", type="primary"):
@@ -659,5 +708,6 @@ if aba_atual == "🗑️ Gerenciar":
                 st.rerun()
             else:
                 st.info("Marque a confirmação para prosseguir.")
+        st.markdown('</div>', unsafe_allow_html=True)
     else:
         st.warning("Nenhuma versão disponível para gerenciar. Importe dados na aba '📥 Importar'.")
