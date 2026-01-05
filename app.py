@@ -10,7 +10,7 @@ import base64
 # =====================================================
 # CONFIG
 # =====================================================
-DB_NAME = "data/cbhpm_database.db"
+DB_NAME = "cbhpm_database.db"
 
 # =====================================================
 # GITHUB – PERSISTÊNCIA (GAMBIARRA CONTROLADA)
@@ -32,7 +32,7 @@ def baixar_banco():
     else:
         open(DB_NAME, "wb").close()
 
-def salvar_banco_github():
+def salvar_banco_github(msg="Atualização automática do banco CBHPM"):
     with open(DB_NAME, "rb") as f:
         content = base64.b64encode(f.read()).decode()
 
@@ -47,7 +47,7 @@ def salvar_banco_github():
     sha = r.json().get("sha") if r.status_code == 200 else None
 
     payload = {
-        "message": "Atualização automática do banco CBHPM",
+        "message": msg,
         "content": content,
         "branch": st.secrets["GITHUB_BRANCH"]
     }
@@ -96,15 +96,6 @@ def criar_tabelas():
         filme REAL,
         versao TEXT,
         UNIQUE (codigo, versao)
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS convenios (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nome TEXT UNIQUE,
-        inflator REAL,
-        valor_filme REAL
     )
     """)
 
@@ -186,9 +177,7 @@ def importar(arquivos, versao):
 
     con.commit()
     con.close()
-
-    # ⬆️ salva no GitHub APÓS escrita
-    salvar_banco_github()
+    salvar_banco_github(f"Importação CBHPM {versao}")
 
 # =====================================================
 # CONSULTAS
@@ -214,7 +203,41 @@ def buscar_descricao(desc, versao):
     """, conn(), params=(f"%{desc}%", versao))
 
 # =====================================================
-# EXPORTAÇÃO POR VERSÃO
+# CÁLCULO
+# =====================================================
+def calcular(codigo, versao, inflator, valor_filme):
+    df = buscar_codigo(codigo, versao)
+    if df.empty:
+        return None
+
+    p = df.iloc[0]
+    fator = 1 + inflator / 100
+
+    porte = p["porte"] * fator
+    uco = p["uco"] * fator
+    filme = p["filme"] * valor_filme
+    total = porte + uco + filme
+
+    return p["descricao"], porte, uco, filme, total
+
+# =====================================================
+# COMPARAÇÃO
+# =====================================================
+def comparar(v1, v2):
+    df1 = buscar_codigo("", v1)
+    df2 = buscar_codigo("", v2).rename(
+        columns={"porte": "porte_2", "uco": "uco_2", "filme": "filme_2"}
+    )
+
+    df = df1.merge(df2, on="codigo")
+    df["Δ Porte"] = df["porte_2"] - df["porte"]
+    df["Δ UCO"] = df["uco_2"] - df["uco"]
+    df["Δ Filme"] = df["filme_2"] - df["filme"]
+
+    return df
+
+# =====================================================
+# EXPORTAÇÃO
 # =====================================================
 def exportar_excel_por_versao(versoes_selecionadas=None):
     todas = versoes()
@@ -247,6 +270,8 @@ criar_tabelas()
 menu = st.sidebar.radio("Menu", [
     "📥 Importar",
     "📋 Consultar",
+    "🧮 Calcular",
+    "🔍 Comparar",
     "📤 Exportar Excel"
 ])
 
@@ -271,6 +296,37 @@ if menu == "📋 Consultar":
     if st.button("Buscar"):
         df = buscar_codigo(termo, v) if tipo == "Código" else buscar_descricao(termo, v)
         st.dataframe(df, use_container_width=True)
+
+# =====================================================
+# CALCULAR
+# =====================================================
+if menu == "🧮 Calcular":
+    v = st.selectbox("Versão", versoes())
+    codigo = st.text_input("Código do procedimento")
+    inflator = st.number_input("Inflator (%)", 0.0, 500.0, 0.0)
+    valor_filme = st.number_input("Valor do filme", 0.0, 1000.0, 21.70)
+
+    if st.button("Calcular"):
+        r = calcular(codigo, v, inflator, valor_filme)
+        if not r:
+            st.warning("Procedimento não encontrado")
+        else:
+            desc, porte, uco, filme, total = r
+            st.info(desc)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Porte", f"R$ {porte:,.2f}")
+            c2.metric("UCO", f"R$ {uco:,.2f}")
+            c3.metric("Filme", f"R$ {filme:,.2f}")
+            st.success(f"💰 Total: R$ {total:,.2f}")
+
+# =====================================================
+# COMPARAR
+# =====================================================
+if menu == "🔍 Comparar":
+    v1 = st.selectbox("Versão base", versoes())
+    v2 = st.selectbox("Versão comparada", versoes())
+    if st.button("Comparar"):
+        st.dataframe(comparar(v1, v2), use_container_width=True)
 
 # =====================================================
 # EXPORTAR
