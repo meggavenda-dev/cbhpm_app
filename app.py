@@ -132,18 +132,20 @@ def excluir_versao(versao):
 def importar(arquivos, versao):
     if not versao:
         st.error("Por favor, informe a Versão CBHPM.")
-        return
+        return False
 
     mapa = {"codigo": ["Código", "Codigo"], "descricao": ["Descrição", "Descricao"], 
             "porte": ["Porte"], "uco": ["UCO", "CH"], "filme": ["Filme"]}
     
     con = conn()
     cur = con.cursor()
+    arquivos_processados = 0
 
     for arq in arquivos:
         h = gerar_hash_arquivo(arq)
+        # SEGURANÇA: Não permite importar o mesmo conteúdo duas vezes
         if arquivo_ja_importado(h):
-            st.info(f"O arquivo {arq.name} já foi importado.")
+            st.warning(f"O conteúdo do arquivo '{arq.name}' já foi importado anteriormente e não será duplicado.")
             continue
 
         try:
@@ -171,13 +173,17 @@ def importar(arquivos, versao):
                                VALUES (?,?,?,?,?,?)""", (r['codigo'], r['descricao'], r['porte'], r['uco'], r['filme'], r['versao']))
             
             registrar_arquivo(h, versao)
-            st.success(f"Sucesso: {arq.name}")
+            arquivos_processados += 1
         except Exception as e:
-            st.error(f"Erro em {arq.name}: {e}")
+            st.error(f"Erro crítico no arquivo {arq.name}: {e}")
 
     con.commit()
     con.close()
-    salvar_banco_github(f"Importação {versao}")
+    
+    if arquivos_processados > 0:
+        salvar_banco_github(f"Importação {versao}")
+        return True
+    return False
 
 # =====================================================
 # CONSULTAS
@@ -202,7 +208,6 @@ criar_tabelas()
 st.set_page_config(page_title="CBHPM Gestão", layout="wide")
 st.title("CBHPM • Gestão Inteligente")
 
-# Seleção de Versão na Sidebar para evitar duplicação e facilitar uso
 lista_versoes = versoes()
 v_selecionada = st.sidebar.selectbox("Tabela CBHPM Ativa", lista_versoes, key="v_global") if lista_versoes else None
 
@@ -213,10 +218,32 @@ with abas[0]:
     v_imp = st.text_input("Nome da Versão (ex: CBHPM 2024)")
     arqs = st.file_uploader("Upload arquivos", accept_multiple_files=True)
     if st.button("Executar Importação", key="btn_imp"):
-        importar(arqs, v_imp)
-        st.rerun()
+        if importar(arqs, v_imp):
+            st.success(f"Tabela '{v_imp}' importada com sucesso!")
+            st.balloons()
+            # Pequena pausa para o usuário ver a mensagem antes do refresh
+            import time
+            time.sleep(2)
+            st.rerun()
 
-# 2. CONSULTAR
+# 6. EXCLUIR (GERENCIAR)
+with abas[5]:
+    if lista_versoes:
+        v_excluir = st.selectbox("Versão para deletar", lista_versoes, key="v_del")
+        confirma = st.checkbox("Confirmar exclusão irreversível de todos os dados desta versão")
+        if st.button("Deletar Versão", key="btn_del"):
+            if confirma:
+                n = excluir_versao(v_excluir)
+                st.success(f"Versão '{v_excluir}' removida com sucesso! {n} registros foram apagados.")
+                import time
+                time.sleep(2)
+                st.rerun()
+            else:
+                st.warning("Você deve marcar a caixa de confirmação para prosseguir.")
+    else:
+        st.info("Nenhuma versão cadastrada para exclusão.")
+
+# --- As demais abas (Consultar, Calcular, Comparar, Exportar) permanecem com sua lógica original ---
 with abas[1]:
     if v_selecionada:
         st.info(f"Pesquisando na: **{v_selecionada}**")
@@ -228,7 +255,6 @@ with abas[1]:
     else:
         st.warning("Nenhuma versão disponível. Importe dados primeiro.")
 
-# 3. CALCULAR
 with abas[2]:
     if v_selecionada:
         cod_calc = st.text_input("Código do procedimento", key="cod_calc")
@@ -236,7 +262,6 @@ with abas[2]:
         v_uco = c1.number_input("Valor UCO", value=1.0)
         v_filme = c2.number_input("Valor Filme", value=21.70)
         infla = c3.number_input("Acréscimo %", value=0.0)
-        
         if st.button("Calcular", key="btn_calc"):
             res = buscar_dados(cod_calc, v_selecionada, "Código")
             if not res.empty:
@@ -246,7 +271,6 @@ with abas[2]:
                 st.metric(f"Total - {p['descricao']}", f"R$ {tot:,.2f}")
             else: st.error("Código não encontrado.")
 
-# 4. COMPARAR
 with abas[3]:
     if len(lista_versoes) >= 2:
         col_a, col_b = st.columns(2)
@@ -258,21 +282,9 @@ with abas[3]:
             st.dataframe(dfa.merge(dfb, on="codigo"), use_container_width=True)
     else: st.info("Necessário ao menos 2 versões para comparar.")
 
-# 5. EXPORTAR
 with abas[4]:
     if st.button("Gerar Excel Completo", key="btn_exp"):
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             pd.read_sql("SELECT * FROM procedimentos", conn()).to_excel(writer, sheet_name="Dados", index=False)
         st.download_button("Baixar Arquivo", output.getvalue(), "cbhpm_full.xlsx")
-
-# 6. EXCLUIR
-with abas[5]:
-    v_excluir = st.selectbox("Versão para deletar", lista_versoes, key="v_del")
-    confirma = st.checkbox("Confirmar exclusão irreversível")
-    if st.button("Deletar Versão", key="btn_del"):
-        if confirma:
-            n = excluir_versao(v_excluir)
-            st.success(f"Removidos {n} itens.")
-            st.rerun()
-        else: st.warning("Marque a confirmação.")
