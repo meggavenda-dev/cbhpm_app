@@ -1,4 +1,3 @@
-
 import os
 import base64
 import hashlib
@@ -23,7 +22,7 @@ os.makedirs("data", exist_ok=True)
 if 'comparacao_realizada' not in st.session_state:
     st.session_state.comparacao_realizada = False
 
-# Aba preferida (controla índice do radio). Começa em "Consultar".
+# Aba preferida (controla índice do radio). Começa em "📋 Consultar".
 if "aba_pref" not in st.session_state:
     st.session_state.aba_pref = "📋 Consultar"
 
@@ -359,7 +358,7 @@ if aba_atual == "📋 Consultar":
         st.warning("Nenhuma versão disponível. Importe dados na aba '📥 Importar'.")
 
 # =====================================================
-# 3) CALCULAR
+# 3) CALCULAR  (SEM CAMPO DE VALOR UCO)
 # =====================================================
 if aba_atual == "🧮 Calcular":
     lista_v = versoes()
@@ -381,18 +380,25 @@ if aba_atual == "🧮 Calcular":
             </style>
         """, unsafe_allow_html=True)
 
-        # Formulário para evitar rerun completo
+        # Valor monetário da UCO aplicado automaticamente:
+        # usa st.secrets["UCO_VALOR"] se existir, senão padrão 1.00
+        UCO_VALOR_APLICADO = float(st.secrets.get("UCO_VALOR", 1.00))
+
+        # Formulário
         with st.form("form_calc"):
             col_cod, col_ajuste = st.columns([2, 1])
             cod_calc = col_cod.text_input("Código do Procedimento", placeholder="Ex: 10101012", key="in_calc")
             infla = col_ajuste.number_input("Ajuste Adicional (%)", 0.0, step=0.5, key="in_infla")
 
-            c1, c2 = st.columns(2)
-            uco_v = c1.number_input("Valor UCO (R$)", 1.0, step=0.01, format="%.4f", key="in_uco_val")
-            filme_v = c2.number_input("Valor Filme (R$)", 21.70, step=0.01, format="%.2f", key="in_filme_val")
+            # Manter apenas o campo de Filme (retirado Valor UCO)
+            filme_v = st.number_input("Valor Filme (R$)", 21.70, step=0.01, format="%.2f", key="in_filme_val")
 
             # Botão dentro do form evita rerun completo
             calcular_btn = st.form_submit_button("Calcular Agora")
+
+        # Mostrar qual UCO está sendo aplicado (informativo)
+        st.caption(f"🔧 Valor de UCO aplicado automaticamente: **R$ {UCO_VALOR_APLICADO:,.4f}** "
+                   f"(defina `UCO_VALOR` em `st.secrets` para alterar)")
 
         if calcular_btn:
             if not cod_calc:
@@ -404,7 +410,8 @@ if aba_atual == "🧮 Calcular":
                     f = 1 + (infla/100)
                     
                     porte_calc = p['porte'] * f
-                    uco_calc = p['uco'] * uco_v * f
+                    # UCO calculado sem input do usuário (usando UCO_VALOR_APLICADO)
+                    uco_calc = p['uco'] * UCO_VALOR_APLICADO * f
                     filme_calc = p['filme'] * filme_v * f
                     total = porte_calc + uco_calc + filme_calc
 
