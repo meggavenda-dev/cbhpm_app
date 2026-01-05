@@ -346,19 +346,27 @@ with abas[4]:
 with abas[5]: # ABA GERENCIAR
     if lista_versoes:
         st.subheader("🗑️ Gerenciar Dados")
-        v_del = st.selectbox("Selecione a versão para excluir permanentemente", lista_versoes, key="v_del_aba")
         
+        # Criamos um container para as mensagens de sucesso/erro
+        placeholder = st.empty()
+        
+        v_del = st.selectbox("Selecione a versão para excluir permanentemente", lista_versoes, key="v_del_aba")
         confirmar = st.checkbox(f"Confirmo que desejo apagar todos os registros da versão {v_del}")
         
-        if st.button("Confirmar Exclusão Definitiva", type="primary"):
+        if st.button("Confirmar Exclusão Definitiva", type="primary", key="btn_confirm_del"):
             if confirmar:
-                with st.spinner("Excluindo dados e atualizando nuvem..."):
-                    n_removidos = excluir_versao(v_del)
-                    # Limpa o cache para que a lista de versões na barra lateral atualize
-                    st.cache_data.clear()
-                    st.success(f"Sucesso! {n_removidos} registros removidos.")
-                    time.sleep(2) # Agora o import 'time' existe!
-                    st.rerun() 
+                # 1. Executa a exclusão no banco e GitHub
+                n_removidos = excluir_versao(v_del)
+                
+                # 2. Limpa o cache IMEDIATAMENTE
+                st.cache_data.clear()
+                
+                # 3. Feedback visual no placeholder
+                placeholder.success(f"Sucesso! Versão '{v_del}' e seus {n_removidos} registros foram removidos.")
+                
+                # 4. Pequena pausa para o usuário ler e REINÍCIO FORÇADO
+                time.sleep(1.5)
+                st.rerun() 
             else:
                 st.warning("Marque a caixa de confirmação para prosseguir.")
     else:
