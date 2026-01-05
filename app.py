@@ -238,10 +238,6 @@ def importar(arquivos, versao):
 baixar_banco()
 criar_tabelas()
 
-# Agora a interface do Streamlit
-st.title("Sistema de Gestão CBHPM")
-st.write("Banco de dados carregado e tabelas verificadas.")
-
 # =====================================================
 # BANCO
 # =====================================================
