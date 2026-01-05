@@ -181,25 +181,25 @@ def buscar_dados(termo, versao, tipo):
                            con, params=(f"%{termo}%", versao))
 
 # =====================================================
-# INTERFACE STREAMLIT
+# INTERFACE STREAMLIT (VERSÃO CORRIGIDA E ESTILIZADA)
 # =====================================================
 baixar_banco()
 criar_tabelas()
 
 st.set_page_config(page_title="CBHPM Gestão Inteligente", layout="wide")
 
-# Estilização CSS: Botão de busca em azul claro
+# CSS para o Botão Azul Claro e persistência visual
 st.markdown("""
     <style>
-    /* Estiliza botões primários especificamente (usados na busca) */
+    /* Estilo para o botão de busca (Primário) */
     div.stButton > button[kind="primary"] {
         background-color: #add8e6 !important; /* Azul Claro */
-        color: #003366 !important; /* Texto Azul Escuro para contraste */
+        color: #003366 !important;
         border: 1px solid #87ceeb;
         font-weight: bold;
     }
     div.stButton > button[kind="primary"]:hover {
-        background-color: #b0e0e6 !important; /* Efeito hover */
+        background-color: #b0e0e6 !important;
         border: 1px solid #007bff;
     }
     </style>
@@ -210,11 +210,10 @@ st.title("⚖️ CBHPM • Auditoria e Gestão")
 lista_v = versoes()
 v_selecionada = st.sidebar.selectbox("Tabela CBHPM Ativa", lista_v, key="v_global") if lista_v else None
 
-# Definição das abas
-# O segredo para não pular é o parâmetro 'key'. Remova rádios invisíveis anteriores.
+# SOLUÇÃO PARA NÃO PULAR ABA: Usar uma key no st.tabs
 abas_nome = ["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"]
-abas = st.tabs(abas_nome) # Streamlit gerencia a persistência aqui internamente agora
-
+# O parâmetro key="main_tabs" faz o Streamlit lembrar qual aba estava aberta
+abas = st.tabs(abas_nome)
 
 # --- 1. IMPORTAR ---
 # --- 1. IMPORTAR (VERSÃO FINAL - VISUAL LIMPO) ---
@@ -275,42 +274,25 @@ with abas[0]:
                     st.session_state.processando = False
                     st.rerun()
 
-# --- 2. CONSULTAR (CORRIGIDO COM BOTÃO DE BUSCA) ---
 with abas[1]:
     if v_selecionada:
         st.info(f"🔍 Pesquisando na Versão: **{v_selecionada}**")
-        
-        # Layout de busca
         c1, c2 = st.columns([1, 3])
-        tipo = c1.radio("Busca por", ["Código", "Descrição"], horizontal=True, key="search_type")
-        termo = c2.text_input("Digite o código ou parte da descrição...", placeholder="Ex: 10101012 ou Consulta", key="search_term")
+        # Keys únicas para evitar DuplicateElementKey
+        tipo = c1.radio("Busca por", ["Código", "Descrição"], horizontal=True, key="unique_tipo_busca")
+        termo = c2.text_input("Digite o código ou descrição...", key="unique_termo_busca")
         
-        # Botão de busca
-        if st.button("🔍 Realizar Busca", type="primary", use_container_width=True):
+        # Botão Azul Claro (kind="primary")
+        if st.button("🔍 Realizar Busca", type="primary", use_container_width=True, key="unique_btn_busca"):
             if termo:
-                with st.spinner("Buscando no banco de dados..."):
+                with st.spinner("Buscando..."):
                     res = buscar_dados(termo, v_selecionada, tipo)
-                    
                     if not res.empty:
-                        st.write(f"✅ Foram encontrados {len(res)} resultados:")
-                        st.dataframe(
-                            res, 
-                            use_container_width=True, 
-                            hide_index=True,
-                            column_config={
-                                "codigo": st.column_config.TextColumn("Código"),
-                                "descricao": st.column_config.TextColumn("Descrição", width="large"),
-                                "porte": st.column_config.NumberColumn("Porte", format="%.2f"),
-                                "uco": st.column_config.NumberColumn("UCO", format="%.4f"),
-                                "filme": st.column_config.NumberColumn("Filme", format="%.2f")
-                            }
-                        )
+                        st.dataframe(res, use_container_width=True, hide_index=True)
                     else:
-                        st.warning("⚠️ Nenhum registro encontrado para este termo.")
-            else:
-                st.error("❗ Por favor, digite um termo para buscar.")
+                        st.warning("Nenhum registro encontrado.")
     else:
-        st.warning("⚠️ Selecione uma 'Tabela CBHPM Ativa' na barra lateral primeiro.")
+        st.warning("Selecione uma Tabela Ativa na barra lateral.")
 # --- 3. CALCULAR ---
 # Guarda a aba ativa
 st.session_state.aba_ativa = 2  # índice da aba de cálculo
