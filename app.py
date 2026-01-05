@@ -342,66 +342,42 @@ with abas[2]:
         
 # --- 4. COMPARAR ---
 with abas[3]:
-    st.subheader("⚖️ Análise de Reajustes entre Versões")
-    
-    if len(st.session_state.lista_versoes) >= 2:
+    if len(lista_v) >= 2:
         col1, col2 = st.columns(2)
-        v1 = col1.selectbox("Versão Anterior (Base)", st.session_state.lista_versoes, key="v1_comp")
-        v2 = col2.selectbox("Versão Atual (Nova)", st.session_state.lista_versoes, index=1, key="v2_comp")
+        v1 = col1.selectbox("Versão Anterior", lista_v, key="v1")
+        v2 = col2.selectbox("Versão Atual", lista_v, key="v2")
         
-        # Botão para disparar a análise
-        if st.button("Analisar Reajustes", type="secondary", use_container_width=True):
+        if st.button("Analisar Reajustes"):
             st.session_state.comparacao_realizada = True
-
-        # Renderização condicional para não perder os dados ao interagir
+        
         if st.session_state.comparacao_realizada:
             df1 = buscar_dados("", v1, "Código")
-            # Renomear colunas para evitar conflito no merge
-            df2 = buscar_dados("", v2, "Código").rename(columns={
-                "porte":"porte_2", "uco":"uco_2", "filme":"filme_2", "descricao":"desc_2"
-            })
-            
+            df2 = buscar_dados("", v2, "Código").rename(columns={"porte":"porte_2", "uco":"uco_2", "filme":"filme_2", "descricao":"desc_2"})
             comp = df1.merge(df2, on="codigo")
             
             if not comp.empty:
-                # Cálculo da variação
                 comp['var_porte'] = ((comp['porte_2'] - comp['porte']) / comp['porte'].replace(0,1)) * 100
                 
                 # Resumo das Métricas
-                st.markdown("---")
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Itens Comuns", len(comp))
-                m2.metric("Variação Média", f"{comp['var_porte'].mean():.2f}%")
+                m2.metric("Variação Média Porte", f"{comp['var_porte'].mean():.2f}%")
                 m3.metric("Itens com Aumento", len(comp[comp['var_porte'] > 0]))
 
-                # Gráfico de Variação por Capítulo (Ex: 10, 30, 40)
-                st.write("### Variação Média por Grupo (Capítulo)")
-                comp['capitulo'] = comp['codigo'].astype(str).str[:2]
-                resumo = comp.groupby('capitulo')['var_porte'].mean().reset_index()
-                
-                import altair as alt
+                # Gráfico
+                resumo = comp.groupby(comp['codigo'].str[:2])['var_porte'].mean().reset_index()
                 chart = alt.Chart(resumo).mark_bar().encode(
-                    x=alt.X('capitulo:N', title="Grupo (Capítulo)"),
+                    x=alt.X('codigo:N', title="Grupo (Capítulo)"),
                     y=alt.Y('var_porte:Q', title="Variação %"),
-                    color=alt.condition(alt.datum.var_porte > 0, alt.value('#2ecc71'), alt.value('#e74c3c'))
-                ).properties(height=300)
+                    color=alt.condition(alt.datum.var_porte > 0, alt.value('steelblue'), alt.value('orange'))
+                ).properties(height=350)
                 st.altair_chart(chart, use_container_width=True)
 
-                # Tabela Detalhada
-                st.dataframe(
-                    comp[['codigo', 'descricao', 'porte', 'porte_2', 'var_porte']], 
-                    use_container_width=True, 
-                    hide_index=True,
-                    column_config={
-                        "codigo": "Código",
-                        "descricao": "Descrição",
-                        "porte": f"Porte ({v1})",
-                        "porte_2": f"Porte ({v2})",
-                        "var_porte": st.column_config.NumberColumn("Variação %", format="%.2f%%")
-                    }
-                )
-    else:
-        st.warning("Necessário ao menos 2 versões para comparar.")
+                st.dataframe(comp[['codigo', 'descricao', 'porte', 'porte_2', 'var_porte']], 
+                             use_container_width=True, hide_index=True,
+                             column_config={"var_porte": st.column_config.NumberColumn("Variação %", format="%.2f%%")})
+    else: st.warning("Necessário ao menos 2 versões para comparar.")
+
 
 # --- 5. EXPORTAR ---
 with abas[4]:
