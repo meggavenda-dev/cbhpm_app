@@ -181,45 +181,38 @@ def buscar_dados(termo, versao, tipo):
                            con, params=(f"%{termo}%", versao))
 
 # =====================================================
-# INTERFACE STREAMLIT (VERSÃO CORRIGIDA E ESTILIZADA)
+# INTERFACE STREAMLIT
 # =====================================================
 baixar_banco()
 criar_tabelas()
 
 st.set_page_config(page_title="CBHPM Gestão Inteligente", layout="wide")
-
-# CSS para o Botão Azul Claro e persistência visual
-st.markdown("""
-    <style>
-    /* Estilo para o botão de busca (Primário) */
-    div.stButton > button[kind="primary"] {
-        background-color: #add8e6 !important; /* Azul Claro */
-        color: #003366 !important;
-        border: 1px solid #87ceeb;
-        font-weight: bold;
-    }
-    div.stButton > button[kind="primary"]:hover {
-        background-color: #b0e0e6 !important;
-        border: 1px solid #007bff;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
 st.title("⚖️ CBHPM • Auditoria e Gestão")
 
 lista_v = versoes()
 v_selecionada = st.sidebar.selectbox("Tabela CBHPM Ativa", lista_v, key="v_global") if lista_v else None
 
-# SOLUÇÃO PARA NÃO PULAR ABA: Usar uma key no st.tabs
+# --- SOLUÇÃO DO ERRO ---
+# 1. Definir os nomes primeiro
 abas_nome = ["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"]
-# O parâmetro key="main_tabs" faz o Streamlit lembrar qual aba estava aberta
+
+# 2. Criar o rádio invisível para persistência (Opcional, mas deve vir antes das abas)
+# Nota: Se as abas estão pulando, o uso de 'key' no st.tabs é mais simples em versões novas do Streamlit
+aba_selecionada_idx = st.session_state.aba_ativa_idx
+
+# 3. Criar as abas fisicamente
 abas = st.tabs(abas_nome)
 
+# Lógica para registrar qual aba está aberta (ajuda a evitar o pulo)
+def registrar_aba(nome):
+    st.session_state.aba_ativa_idx = abas_nome.index(nome)
+   
 # --- 1. IMPORTAR ---
 # --- 1. IMPORTAR (VERSÃO FINAL - VISUAL LIMPO) ---
 # --- 1. IMPORTAR (VERSÃO CORRIGIDA - SEM TELA BRANCA) ---
 # --- 1. IMPORTAR (RESOLVIDO: SEM NAMEERROR E SEM TELA BRANCA) ---
 with abas[0]:
+    st.session_state.aba_ativa_idx = 0
     st.subheader("Carregar Novos Dados")
 
     # Inicializa variáveis de controle no estado da sessão
@@ -274,55 +267,89 @@ with abas[0]:
                     st.session_state.processando = False
                     st.rerun()
 
+# --- 2. CONSULTAR ---
 with abas[1]:
+    st.session_state.aba_ativa_idx = 1
     if v_selecionada:
-        st.info(f"🔍 Pesquisando na Versão: **{v_selecionada}**")
+        st.info(f"Pesquisando na Versão: {v_selecionada}")
         c1, c2 = st.columns([1, 3])
-        # Keys únicas para evitar DuplicateElementKey
-        tipo = c1.radio("Busca por", ["Código", "Descrição"], horizontal=True, key="unique_tipo_busca")
-        termo = c2.text_input("Digite o código ou descrição...", key="unique_termo_busca")
-        
-        # Botão Azul Claro (kind="primary")
-        if st.button("🔍 Realizar Busca", type="primary", use_container_width=True, key="unique_btn_busca"):
-            if termo:
-                with st.spinner("Buscando..."):
-                    res = buscar_dados(termo, v_selecionada, tipo)
-                    if not res.empty:
-                        st.dataframe(res, use_container_width=True, hide_index=True)
-                    else:
-                        st.warning("Nenhum registro encontrado.")
-    else:
-        st.warning("Selecione uma Tabela Ativa na barra lateral.")
+        tipo = c1.radio("Busca por", ["Código", "Descrição"], horizontal=True)
+        termo = c2.text_input("Digite o termo de busca...")
+        if termo:
+            res = buscar_dados(termo, v_selecionada, tipo)
+            st.dataframe(res, use_container_width=True, hide_index=True)
+
 # --- 3. CALCULAR ---
 # Guarda a aba ativa
 st.session_state.aba_ativa = 2  # índice da aba de cálculo
 
-# --- 2. CONSULTAR ---
-with abas[1]:
+with abas[2]:
     if v_selecionada:
-        st.info(f"🔍 Pesquisando na Versão: **{v_selecionada}**")
+        st.subheader("🧮 Calculadora de Honorários CBHPM")
         
-        # Colunas para filtros
-        c1, c2 = st.columns([1, 3])
-        tipo = c1.radio("Busca por", ["Código", "Descrição"], horizontal=True, key="search_type")
-        termo = c2.text_input("Digite o termo...", placeholder="Ex: 10101012", key="search_term")
-        
-        # Botão Azul Claro (kind="primary")
-        if st.button("🔍 Realizar Busca", type="primary", use_container_width=True):
-            if termo:
-                with st.spinner("Buscando no banco..."):
-                    res = buscar_dados(termo, v_selecionada, tipo)
-                    if not res.empty:
-                        st.dataframe(res, use_container_width=True, hide_index=True)
-                    else:
-                        st.warning("Nenhum registro encontrado.")
+        st.markdown("""
+            <style>
+            [data-testid="stMetricValue"] { font-size: 1.8rem; color: #007bff; }
+            .res-card { 
+                padding: 20px; 
+                border-radius: 10px; 
+                background-color: #f8f9fa; 
+                border-left: 5px solid #007bff;
+                margin-bottom: 20px;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+
+        # Formulário para evitar rerun completo
+        with st.form("form_calc"):
+            col_cod, col_ajuste = st.columns([2, 1])
+            cod_calc = col_cod.text_input("Código do Procedimento", placeholder="Ex: 10101012", key="in_calc")
+            infla = col_ajuste.number_input("Ajuste Adicional (%)", 0.0, step=0.5, key="in_infla")
+
+            c1, c2 = st.columns(2)
+            uco_v = c1.number_input("Valor UCO (R$)", 1.0, step=0.01, format="%.4f", key="in_uco_val")
+            filme_v = c2.number_input("Valor Filme (R$)", 21.70, step=0.01, format="%.2f", key="in_filme_val")
+
+            # Botão dentro do form evita rerun completo
+            calcular_btn = st.form_submit_button("Calcular Agora")
+
+        if calcular_btn:
+            st.session_state.aba_ativa_idx = 2  # mantém aba de cálculo
+            if not cod_calc:
+                st.warning("Por favor, insira um código.")
             else:
-                st.error("Por favor, digite um termo para buscar.")
-    else:
-        st.warning("⚠️ Selecione uma 'Tabela CBHPM Ativa' na barra lateral.")
+                res = buscar_dados(cod_calc, v_selecionada, "Código")
+                if not res.empty:
+                    p = res.iloc[0]
+                    f = 1 + (infla/100)
+                    
+                    porte_calc = p['porte'] * f
+                    uco_calc = p['uco'] * uco_v * f
+                    filme_calc = p['filme'] * filme_v * f
+                    total = porte_calc + uco_calc + filme_calc
+
+                    # Resultado visual
+                    st.markdown(f"""
+                        <div class="res-card">
+                            <small>Procedimento encontrado em <b>{v_selecionada}</b></small><br>
+                            <span style='font-size: 1.2rem;'>{p['descricao']}</span>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+                    c_porte, c_uco, c_filme, c_total = st.columns(4)
+                    c_porte.metric("Porte", f"R$ {porte_calc:,.2f}")
+                    c_uco.metric("UCO", f"R$ {uco_calc:,.2f}")
+                    c_filme.metric("Filme", f"R$ {filme_calc:,.2f}")
+                    c_total.metric("TOTAL FINAL", f"R$ {total:,.2f}", delta=f"{infla:.2f}%" if infla != 0 else None)
+                    
+                    st.divider()
+
+                else:
+                    st.error(f"O código '{cod_calc}' não foi encontrado na tabela {v_selecionada}.")
         
 # --- 4. COMPARAR (CORRIGIDO) ---
 with abas[3]:
+    st.session_state.aba_ativa_idx = 3
     # Verifique se o 'if' abaixo tem exatamente 4 espaços de recuo em relação ao 'with'
     if len(lista_v) >= 2:
         col1, col2 = st.columns(2)
@@ -368,6 +395,7 @@ with abas[3]:
 
 # --- 5. EXPORTAR (CORRIGIDO) ---
 with abas[4]:
+    st.session_state.aba_ativa_idx = 4
     if lista_v:
         st.subheader("📤 Exportar Banco de Dados")
         if st.button("📦 Gerar Backup em Excel"):
