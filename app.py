@@ -12,6 +12,20 @@ import requests
 import altair as alt
 import streamlit as st
 
+# --- INICIALIZAÇÃO DE ESTADO ---
+if 'lista_versoes' not in st.session_state:
+    # Tenta carregar as versões do banco ou inicia vazio
+    try:
+        st.session_state.lista_versoes = carregar_versoes_db()
+    except:
+        st.session_state.lista_versoes = []
+
+if 'comparacao_realizada' not in st.session_state:
+    st.session_state.comparacao_realizada = False
+
+if 'aba_ativa' not in st.session_state:
+    st.session_state.aba_ativa = 0
+
 # =====================================================
 # CONFIGURAÇÕES E ESTADO DA SESSÃO
 # =====================================================
@@ -190,11 +204,6 @@ st.title("⚖️ CBHPM • Auditoria e Gestão")
 lista_v = versoes()
 v_selecionada = st.sidebar.selectbox("Tabela Ativa", lista_v, key="v_global") if lista_v else None
 
-if 'aba_ativa_idx' not in st.session_state:
-    st.session_state.aba_ativa_idx = 0
-if 'comparacao_realizada' not in st.session_state:
-    st.session_state.comparacao_realizada = False
-
 # Criar as abas com uma chave (key) para persistência
 
 abas = st.tabs(["📥 Importar", "📋 Consultar", "🧮 Calcular", "⚖️ Comparar", "📤 Exportar", "🗑️ Gerenciar"])
@@ -339,21 +348,24 @@ with abas[2]:
         
 # --- 4. COMPARAR ---
 with abas[3]:
-    st.subheader("⚖️ Análise de Reajustes entre Versões")
+    st.subheader("⚖️ Análise de Reajustes")
     
-    if len(st.session_state.lista_versoes) >= 2:
+    # Usamos o session_state inicializado no topo
+    lista_v = st.session_state.lista_versoes
+    
+    if len(lista_v) >= 2:
         col1, col2 = st.columns(2)
-        v1 = col1.selectbox("Versão Anterior (Base)", st.session_state.lista_versoes, key="v1_comp")
-        v2 = col2.selectbox("Versão Atual (Nova)", st.session_state.lista_versoes, index=1, key="v2_comp")
+        v1 = col1.selectbox("Versão Anterior", lista_v, key="sel_v1")
+        v2 = col2.selectbox("Versão Atual", lista_v, index=1, key="sel_v2")
         
-        # Botão para disparar a análise
-        if st.button("Analisar Reajustes", type="secondary", use_container_width=True):
+        # O botão apenas ativa a flag no session_state
+        if st.button("Analisar Reajustes", type="primary"):
             st.session_state.comparacao_realizada = True
-
-        # Renderização condicional para não perder os dados ao interagir
+        
+        # Só processa se a flag for True
         if st.session_state.comparacao_realizada:
+            # Busca os dados completos para comparar
             df1 = buscar_dados("", v1, "Código")
-            # Renomear colunas para evitar conflito no merge
             df2 = buscar_dados("", v2, "Código").rename(columns={
                 "porte":"porte_2", "uco":"uco_2", "filme":"filme_2", "descricao":"desc_2"
             })
@@ -361,41 +373,33 @@ with abas[3]:
             comp = df1.merge(df2, on="codigo")
             
             if not comp.empty:
-                # Cálculo da variação
-                comp['var_porte'] = ((comp['porte_2'] - comp['porte']) / comp['porte'].replace(0,1)) * 100
+                # Cálculo da variação com proteção contra divisão por zero
+                comp['var_porte'] = ((comp['porte_2'] - comp['porte']) / comp['porte'].replace(0, 1)) * 100
                 
-                # Resumo das Métricas
-                st.markdown("---")
+                # Métricas
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Itens Comuns", len(comp))
-                m2.metric("Variação Média", f"{comp['var_porte'].mean():.2f}%")
+                m2.metric("Variação Média Porte", f"{comp['var_porte'].mean():.2f}%")
                 m3.metric("Itens com Aumento", len(comp[comp['var_porte'] > 0]))
 
-                # Gráfico de Variação por Capítulo (Ex: 10, 30, 40)
-                st.write("### Variação Média por Grupo (Capítulo)")
-                comp['capitulo'] = comp['codigo'].astype(str).str[:2]
-                resumo = comp.groupby('capitulo')['var_porte'].mean().reset_index()
+                # Gráfico Altair
+                st.write("### Variação por Capítulo (Grupo)")
+                comp['cap'] = comp['codigo'].astype(str).str[:2]
+                resumo = comp.groupby('cap')['var_porte'].mean().reset_index()
                 
-                import altair as alt
                 chart = alt.Chart(resumo).mark_bar().encode(
-                    x=alt.X('capitulo:N', title="Grupo (Capítulo)"),
+                    x=alt.X('cap:N', title="Grupo (Capítulo)"),
                     y=alt.Y('var_porte:Q', title="Variação %"),
-                    color=alt.condition(alt.datum.var_porte > 0, alt.value('#2ecc71'), alt.value('#e74c3c'))
-                ).properties(height=300)
+                    color=alt.condition(alt.datum.var_porte > 0, alt.value('steelblue'), alt.value('orange'))
+                ).properties(height=350)
                 st.altair_chart(chart, use_container_width=True)
 
-                # Tabela Detalhada
+                # Tabela de Dados
                 st.dataframe(
                     comp[['codigo', 'descricao', 'porte', 'porte_2', 'var_porte']], 
                     use_container_width=True, 
                     hide_index=True,
-                    column_config={
-                        "codigo": "Código",
-                        "descricao": "Descrição",
-                        "porte": f"Porte ({v1})",
-                        "porte_2": f"Porte ({v2})",
-                        "var_porte": st.column_config.NumberColumn("Variação %", format="%.2f%%")
-                    }
+                    column_config={"var_porte": st.column_config.NumberColumn("Variação %", format="%.2f%%")}
                 )
     else:
         st.warning("Necessário ao menos 2 versões para comparar.")
